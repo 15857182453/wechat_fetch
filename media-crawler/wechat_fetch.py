@@ -75,6 +75,7 @@ def filter_new_events(events):
     
     new_events = []
     duplicates = 0
+    duplicate_details = []
     
     for event in events:
         msgid_full = event.get("oa_articleId", "")
@@ -85,9 +86,20 @@ def filter_new_events(events):
             new_events.append(event)
         else:
             duplicates += 1
+            duplicate_details.append((msgid_full, stat_date))
     
     if duplicates > 0:
         print(f"📊 已过滤 {duplicates} 条重复数据")
+        # 显示重复数据的详细信息
+        if len(duplicate_details) <= 20:
+            print("   重复数据详情：")
+            for msgid, date in duplicate_details:
+                print(f"   - {msgid} on {date}")
+        else:
+            print(f"   （共 {len(duplicate_details)} 条，超过20条，仅显示前20条）")
+            print("   重复数据详情（前20条）：")
+            for msgid, date in duplicate_details[:20]:
+                print(f"   - {msgid} on {date}")
     
     return new_events, reported_set
 
