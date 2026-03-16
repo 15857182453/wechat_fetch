@@ -462,8 +462,52 @@ def main():
             state["reported"] = list(reported_set)
             save_report_state(state)
             print(f"💾 已更新上报记录，当前共 {len(reported_set)} 条记录")
+        
+        # 钉钉机器人播报
+        send_dingtalk_notice(start_date, end_date, len(new_events), success, fail)
     else:
         print("\n⏭️  跳过上报（dry-run 模式）")
+
+
+def send_dingtalk_notice(start_date, end_date, new_count, success_count, fail_count):
+    """通过钉钉机器人发送任务完成通知"""
+    DingDing_URL = "https://oapi.dingtalk.com/robot/send?access_token=7c8f4d8b385d162711e186c00b7f1f7d4c5b6e3c2a1f0d3e4c5b6e3c2a1f0d3e"
+    
+    # 构建消息内容
+    today = datetime.date.today()
+    date_range = f"{start_date.strftime('%m/%d')} - {end_date.strftime('%m/%d')}"
+    
+    markdown_content = f"""# 📊 微信公众号数据抓取完成
+    
+**📅 抓取日期范围：** {date_range}
+**📝 新增数据条数：** {new_count}
+**✅ 上报成功：** {success_count}
+**❌ 上报失败：** {fail_count}
+**⏱️ 执行时间：** {today.strftime('%Y年%m月%d日')} """
+
+    import urllib.parse
+    import json
+    
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": "📊 微信公众号数据抓取完成",
+            "text": markdown_content
+        }
+    }
+    
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            DingDing_URL,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = response.read().decode('utf-8')
+            print(f"🔔 钉钉通知发送成功: {result}")
+    except Exception as e:
+        print(f"⚠️ 钉钉通知发送失败: {e}")
 
 
 if __name__ == "__main__":
