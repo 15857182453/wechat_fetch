@@ -175,8 +175,8 @@ def process_article(article, date):
 
     for detail in article.get("detail_list", []):
         stat_date = detail.get("stat_date")
-        daily_read = detail.get("read_user", 0)
-        daily_share = detail.get("share_user", 0)
+        daily_read = int(detail.get("read_user", 0) or 0)
+        daily_share = int(detail.get("share_user", 0) or 0)
         cumulative_read += daily_read
         cumulative_share += daily_share
 
