@@ -471,7 +471,7 @@ def main():
 
 def send_dingtalk_notice(start_date, end_date, new_count, success_count, fail_count):
     """通过钉钉机器人发送任务完成通知"""
-    DingDing_URL = "https://oapi.dingtalk.com/robot/send?access_token=7c8f4d8b385d162711e186c00b7f1f7d4c5b6e3c2a1f0d3e4c5b6e3c2a1f0d3e"
+    DingDing_URL = "https://oapi.dingtalk.com/robot/send?access_token=84f55b1393f892b7859aca7692fc9e94a69280def75f72c90c1ebf40c9878e31"
     
     # 构建消息内容
     today = datetime.date.today()
