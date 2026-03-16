@@ -423,9 +423,12 @@ def main():
     # 去重处理
     print("\n🔍 去重检查...")
     new_events, reported_set = filter_new_events(all_events)
+    duplicate_count = len(all_events) - len(new_events)
     
     if len(new_events) == 0:
         print("所有数据均已上报过，无需重复上报")
+        # 仍然发送钉钉通知，但说明没有新数据
+        send_dingtalk_notice(start_date, end_date, 0, 0, 0, duplicate_count)
         return
     
     print(f"📊 新数据 {len(new_events)} 条，已上报记录总数 {len(reported_set)} 条")
@@ -464,12 +467,12 @@ def main():
             print(f"💾 已更新上报记录，当前共 {len(reported_set)} 条记录")
         
         # 钉钉机器人播报
-        send_dingtalk_notice(start_date, end_date, len(new_events), success, fail)
+        send_dingtalk_notice(start_date, end_date, len(new_events), success, fail, 0)
     else:
         print("\n⏭️  跳过上报（dry-run 模式）")
 
 
-def send_dingtalk_notice(start_date, end_date, new_count, success_count, fail_count):
+def send_dingtalk_notice(start_date, end_date, new_count, success_count, fail_count, duplicate_count=0):
     """通过钉钉机器人发送任务完成通知"""
     DingDing_URL = "https://oapi.dingtalk.com/robot/send?access_token=84f55b1393f892b7859aca7692fc9e94a69280def75f72c90c1ebf40c9878e31"
     
@@ -477,7 +480,19 @@ def send_dingtalk_notice(start_date, end_date, new_count, success_count, fail_co
     today = datetime.date.today()
     date_range = f"{start_date.strftime('%m/%d')} - {end_date.strftime('%m/%d')}"
     
-    markdown_content = f"""# 📊 微信公众号数据抓取完成
+    if duplicate_count > 0:
+        markdown_content = f"""# 📊 微信公众号数据抓取完成
+    
+## 📢 微信数据
+**📅 抓取日期范围：** {date_range}
+**📊 抓取总数：** {new_count + duplicate_count}
+**📝 新增数据条数：** {new_count}
+**📉 重复数据条数：** {duplicate_count}
+**✅ 上报成功：** {success_count}
+**❌ 上报失败：** {fail_count}
+**⏱️ 执行时间：** {today.strftime('%Y年%m月%d日')} """
+    else:
+        markdown_content = f"""# 📊 微信公众号数据抓取完成
     
 ## 📢 微信数据
 **📅 抓取日期范围：** {date_range}
