@@ -224,8 +224,8 @@ def process_article(article, date):
             "oa_avg_activetime": detail.get("read_avg_activetime", 0.0),
             "oa_readJumpPosition": str(daily_jump_rate),
             "oa_stat_date": stat_date,
-            "oa_daily_read_user": daily_read,
-            "oa_daily_share_user": daily_share,
+            "oa_readUser_di": f"{stat_date}:{daily_read}",
+            "oa_shareUser_di": f"{stat_date}:{daily_share}",
             # 额外字段（用于 CSV 导出）
             "_event_time": event_time,
             "_stat_date": stat_date,
@@ -276,8 +276,8 @@ def save_to_csv(all_events, filename="wechat_article_stats.csv"):
             "oa_平均阅读时长（分钟）": event.get("oa_avg_activetime", ""),
             "oa_阅读跳出率": event.get("oa_readJumpPosition", ""),
             "oa_统计日期": event.get("oa_stat_date", ""),
-            "oa_每日阅读人数": event.get("oa_daily_read_user", ""),
-            "oa_每日分享人数": event.get("oa_daily_share_user", ""),
+            "oa_每日阅读人数": event.get("oa_readUser_di", ""),
+            "oa_每日分享人数": event.get("oa_shareUser_di", ""),
         }
 
     csv_rows = [event_to_csv_row(event) for event in all_events]
