@@ -40,7 +40,56 @@ GROWINGIO_CONFIG = {
     "event_name": "OA_officialNewsDailyData",
 }
 
+# 去重记录文件路径
+REPORT_STATE_FILE = "wechat_report_state.json"
+
 # ============ 工具函数 ============
+
+def load_report_state():
+    """加载已上报的记录状态"""
+    try:
+        with open(REPORT_STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"reported": []}
+    except json.JSONDecodeError:
+        print(f"⚠️ {REPORT_STATE_FILE} 格式错误，重置为空")
+        return {"reported": []}
+
+
+def save_report_state(state):
+    """保存已上报的记录状态"""
+    with open(REPORT_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def generate_report_key(msgid_full, stat_date):
+    """生成上报记录的唯一键名"""
+    return f"{msgid_full}_{stat_date}"
+
+
+def filter_new_events(events):
+    """过滤掉已上报过的记录，只返回新数据"""
+    state = load_report_state()
+    reported_set = set(state.get("reported", []))
+    
+    new_events = []
+    duplicates = 0
+    
+    for event in events:
+        msgid_full = event.get("oa_articleId", "")
+        stat_date = event.get("_stat_date", "")
+        key = generate_report_key(msgid_full, stat_date)
+        
+        if key not in reported_set:
+            new_events.append(event)
+        else:
+            duplicates += 1
+    
+    if duplicates > 0:
+        print(f"📊 已过滤 {duplicates} 条重复数据")
+    
+    return new_events, reported_set
 
 def get_access_token():
     """通过 OpenAPI 获取微信 access_token"""
@@ -215,7 +264,7 @@ def save_to_json(events, filename="daily_report.json"):
 
 # ============ GrowingIO 上报 ============
 
-def upload_to_growio(events, debug=False):
+def upload_to_growio(events, debug=False, dry_run=False):
     """上报事件到 GrowingIO"""
     try:
         from growingio_tracker import DefaultConsumer, GrowingTracker
@@ -314,6 +363,7 @@ def main():
             for article in articles:
                 events = process_article(article, date_str)
                 all_events.extend(events)
+                print(f"   📄 文章: {article.get('title', '')[:30]}... - {len(events)} 条统计记录")
         else:
             print("   无数据")
 
@@ -324,18 +374,46 @@ def main():
     if not all_events:
         print("没有获取到任何数据")
         return
+    
+    # 去重处理
+    print("\n🔍 去重检查...")
+    new_events, reported_set = filter_new_events(all_events)
+    
+    if len(new_events) == 0:
+        print("所有数据均已上报过，无需重复上报")
+        return
+    
+    print(f"📊 新数据 {len(new_events)} 条，已上报记录总数 {len(reported_set)} 条")
 
     # 保存文件
     date_range_str = f"{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}"
     json_filename = f"{args.output}/daily_report_{date_range_str}.json"
     print(f"\n💾 保存数据到 {json_filename}...")
-    save_to_json(all_events, json_filename)
+    save_to_json(new_events, json_filename)
+    
+    # 保存 CSV（使用去重后的新数据）
+    csv_filename = f"{args.output}/wechat_article_stats_{date_range_str}.csv"
+    save_to_csv(new_events, csv_filename)
 
     # 上报到 GrowingIO
     if not args.dry_run:
         print("\n📤 上报到 GrowingIO...")
-        success, fail = upload_to_growio(all_events, debug=args.debug)
+        success, fail = upload_to_growio(new_events, debug=args.debug, dry_run=args.dry_run)
         print(f"\n✅ 上报完成：成功 {success} 条，失败 {fail} 条")
+        
+        # 更新已上报记录状态
+        if success > 0:
+            state = load_report_state()
+            reported_set = set(state.get("reported", []))
+            for event in new_events:
+                msgid_full = event.get("oa_articleId", "")
+                stat_date = event.get("_stat_date", "")
+                key = generate_report_key(msgid_full, stat_date)
+                if key not in reported_set:
+                    reported_set.add(key)
+            state["reported"] = list(reported_set)
+            save_report_state(state)
+            print(f"💾 已更新上报记录，当前共 {len(reported_set)} 条记录")
     else:
         print("\n⏭️  跳过上报（dry-run 模式）")
 
