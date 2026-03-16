@@ -37,7 +37,7 @@ GROWINGIO_CONFIG = {
     "product_id": "98b451a0ec02c41a",
     "data_source_id": "b7f6d83f9c9734b6",
     "server_host": "https://ngari-collect.fenxiti.com/",
-    "event_name": "OA_officialNewsDailyData",
+    "event_name": "OA_officialNewsDailyData2",
 }
 
 # 去重记录文件路径
