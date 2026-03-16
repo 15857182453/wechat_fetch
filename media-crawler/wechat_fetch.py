@@ -479,6 +479,7 @@ def send_dingtalk_notice(start_date, end_date, new_count, success_count, fail_co
     
     markdown_content = f"""# 📊 微信公众号数据抓取完成
     
+## 📢 微信数据
 **📅 抓取日期范围：** {date_range}
 **📝 新增数据条数：** {new_count}
 **✅ 上报成功：** {success_count}
