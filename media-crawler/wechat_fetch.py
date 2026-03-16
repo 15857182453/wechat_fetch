@@ -223,9 +223,9 @@ def process_article(article, date):
     return events
 
 
-def save_to_csv(all_rows, filename="wechat_article_stats.csv"):
-    """保存汇总数据到 CSV"""
-    if not all_rows:
+def save_to_csv(all_events, filename="wechat_article_stats.csv"):
+    """保存汇总数据到 CSV（从 GrowingIO 事件格式转换）"""
+    if not all_events:
         return
 
     fieldnames = [
@@ -237,12 +237,45 @@ def save_to_csv(all_rows, filename="wechat_article_stats.csv"):
         "oa_统计日期", "oa_每日阅读人数", "oa_每日分享人数"
     ]
 
+    def event_to_csv_row(event):
+        """将 GrowingIO 事件属性转换为 CSV 行"""
+        return {
+            "医院组织 id": event.get("orgId", ""),
+            "公众号名称": event.get("oa_nikeName", ""),
+            "公众号类型": event.get("oa_type", ""),
+            "公众号 appid": event.get("wechatAppid", ""),
+            "文章 id": event.get("oa_articleId", ""),
+            "文章标题": event.get("articleTitle", ""),
+            "文章内容": event.get("oa_content", ""),
+            "文章 url": event.get("oa_contentUrl", ""),
+            "文章发布日期": event.get("oa_articleDate", ""),
+            "oa_文章位置": event.get("oa_articlePosition", ""),
+            "oa_推送人数": event.get("oa_readUser", ""),
+            "oa_阅读来源": event.get("oa_readUserSource", ""),
+            "oa_阅读人数": event.get("oa_readUser", ""),
+            "oa_原文页阅读人数": event.get("oa_oriPageReadUser_var", ""),
+            "oa_分享人数": event.get("oa_shareUser", ""),
+            "oa_拇指赞人数": event.get("oa_likeUser", ""),
+            "oa_收藏人数": event.get("oa_collectionUser", ""),
+            "oa_留言条数": event.get("oa_commentCount", ""),
+            "oa_阅读后关注人数": event.get("oa_readSubscribeUser", ""),
+            "oa_阅读送达率": event.get("oa_readDeliveryRate", ""),
+            "oa_阅读完成率": event.get("oa_readFinishRate", ""),
+            "oa_平均阅读时长（分钟）": event.get("oa_avg_activetime", ""),
+            "oa_阅读跳出率": event.get("oa_readJumpPosition", ""),
+            "oa_统计日期": event.get("oa_stat_date", ""),
+            "oa_每日阅读人数": event.get("oa_daily_read_user", ""),
+            "oa_每日分享人数": event.get("oa_daily_share_user", ""),
+        }
+
+    csv_rows = [event_to_csv_row(event) for event in all_events]
+
     with open(filename, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(all_rows)
+        writer.writerows(csv_rows)
 
-    print(f"📄 汇总数据已保存至 {filename}，共 {len(all_rows)} 条记录")
+    print(f"📄 汇总数据已保存至 {filename}，共 {len(csv_rows)} 条记录")
 
 
 def save_to_json(events, filename="daily_report.json"):
