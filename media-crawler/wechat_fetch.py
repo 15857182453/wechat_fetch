@@ -431,13 +431,16 @@ def main():
     print(f"📊 新数据 {len(new_events)} 条，已上报记录总数 {len(reported_set)} 条")
 
     # 保存文件
+    today_str = datetime.date.today().strftime("%Y%m%d")
     date_range_str = f"{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}"
-    json_filename = f"{args.output}/daily_report_{date_range_str}.json"
+    
+    # 使用日期后缀避免覆盖，格式：daily_report_20260316_20260215_20260316.json
+    json_filename = f"{args.output}/daily_report_{today_str}_{date_range_str}.json"
     print(f"\n💾 保存数据到 {json_filename}...")
     save_to_json(new_events, json_filename)
     
     # 保存 CSV（使用去重后的新数据）
-    csv_filename = f"{args.output}/wechat_article_stats_{date_range_str}.csv"
+    csv_filename = f"{args.output}/wechat_article_stats_{today_str}_{date_range_str}.csv"
     save_to_csv(new_events, csv_filename)
 
     # 上报到 GrowingIO
