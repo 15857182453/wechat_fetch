@@ -14,6 +14,7 @@ import json
 import datetime
 import csv
 import argparse
+import os
 from collections import defaultdict
 from client import Client, Request
 
@@ -37,16 +38,20 @@ GROWINGIO_CONFIG = {
     "product_id": "98b451a0ec02c41a",
     "data_source_id": "b7f6d83f9c9734b6",
     "server_host": "https://ngari-collect.fenxiti.com/",
-    "event_name": "OA_officialNewsDailyData2",
+    "event_name": "OA_officialNewsDailyData3",
 }
 
-# 去重记录文件路径
-REPORT_STATE_FILE = "wechat_report_state.json"
+# 去重记录文件路径 - 保存在 logs 文件夹中
+REPORT_STATE_FILE = "logs/wechat_report_state.json"
 
 # ============ 工具函数 ============
 
 def load_report_state():
     """加载已上报的记录状态"""
+    import os
+    # 确保 logs 目录存在
+    os.makedirs("logs", exist_ok=True)
+    
     try:
         with open(REPORT_STATE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -59,13 +64,17 @@ def load_report_state():
 
 def save_report_state(state):
     """保存已上报的记录状态"""
+    import os
+    # 确保 logs 目录存在
+    os.makedirs("logs", exist_ok=True)
+    
     with open(REPORT_STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
-def generate_report_key(msgid_full, stat_date):
-    """生成上报记录的唯一键名"""
-    return f"{msgid_full}_{stat_date}"
+def generate_report_key(org_id, msgid_full, stat_date):
+    """生成上报记录的唯一键名（包含orgId来区分不同医院）"""
+    return f"{org_id}_{msgid_full}_{stat_date}"
 
 
 def filter_new_events(events):
@@ -78,28 +87,29 @@ def filter_new_events(events):
     duplicate_details = []
     
     for event in events:
+        org_id = event.get("orgId", "")
         msgid_full = event.get("oa_articleId", "")
         stat_date = event.get("_stat_date", "")
-        key = generate_report_key(msgid_full, stat_date)
+        key = generate_report_key(org_id, msgid_full, stat_date)
         
         if key not in reported_set:
             new_events.append(event)
         else:
             duplicates += 1
-            duplicate_details.append((msgid_full, stat_date))
+            duplicate_details.append((org_id, msgid_full, stat_date))
     
     if duplicates > 0:
         print(f"📊 已过滤 {duplicates} 条重复数据")
         # 显示重复数据的详细信息
         if len(duplicate_details) <= 20:
             print("   重复数据详情：")
-            for msgid, date in duplicate_details:
-                print(f"   - {msgid} on {date}")
+            for org, msgid, date in duplicate_details:
+                print(f"   - [{org}] {msgid} on {date}")
         else:
             print(f"   （共 {len(duplicate_details)} 条，超过20条，仅显示前20条）")
             print("   重复数据详情（前20条）：")
-            for msgid, date in duplicate_details[:20]:
-                print(f"   - {msgid} on {date}")
+            for org, msgid, date in duplicate_details[:20]:
+                print(f"   - [{org}] {msgid} on {date}")
     
     return new_events, reported_set
 
@@ -194,7 +204,7 @@ def process_article(article, date):
             if src['scene_desc'] != "全部"
         ])
 
-        # 事件时间戳（毫秒）
+        # 事件时间戳（毫秒）- 使用传递的 stat_date 参数
         dt = datetime.datetime.strptime(stat_date, "%Y-%m-%d")
         event_time = int(dt.timestamp() * 1000)
 
@@ -226,8 +236,8 @@ def process_article(article, date):
             "oa_stat_date": stat_date,
             "oa_readUser_di": daily_read,
             "oa_shareUser_di": daily_share,
+            "event_time": event_time,
             # 额外字段（用于 CSV 导出）
-            "_event_time": event_time,
             "_stat_date": stat_date,
         }
         events.append(attributes)
@@ -297,8 +307,7 @@ def save_to_json(events, filename="daily_report.json"):
     for event in events:
         clean = {k: v for k, v in event.items() if not k.startswith("_")}
         clean_events.append({
-            "attributes": clean,
-            "event_time": event.get("_event_time")
+            "attributes": clean
         })
 
     with open(filename, "w", encoding="utf-8") as f:
@@ -333,7 +342,8 @@ def upload_to_growio(events, debug=False, dry_run=False):
                 tracker.track_custom_event(
                     GROWINGIO_CONFIG["event_name"],
                     attributes=clean_attrs,
-                    anonymous_id='python'
+                    anonymous_id='python',
+                    login_user_id='12345'
                 )
                 success_count += 1
                 print("✅")
@@ -383,6 +393,12 @@ def main():
         start_date = today - datetime.timedelta(days=6)
 
     print(f"📅 日期范围：{start_date} 至 {end_date}")
+    
+    # 创建 logs 目录
+    os.makedirs("logs", exist_ok=True)
+
+    # 创建 logs 目录
+    os.makedirs("logs", exist_ok=True)
 
     # 获取 access_token
     print("\n🔑 获取 access_token...")
@@ -392,6 +408,9 @@ def main():
         return
 
     print(f"✅ Token 获取成功：{access_token[:20]}...")
+    
+    # 确保 logs 目录已创建
+    os.makedirs("logs", exist_ok=True)
 
     # 抓取数据
     print("\n📥 开始抓取文章数据...")
@@ -433,17 +452,20 @@ def main():
     
     print(f"📊 新数据 {len(new_events)} 条，已上报记录总数 {len(reported_set)} 条")
 
-    # 保存文件
+    # 保存文件（保存在 logs 文件夹中）
     today_str = datetime.date.today().strftime("%Y%m%d")
     date_range_str = f"{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}"
     
+    # 创建 logs 目录
+    os.makedirs("logs", exist_ok=True)
+    
     # 使用日期后缀避免覆盖，格式：daily_report_20260316_20260215_20260316.json
-    json_filename = f"{args.output}/daily_report_{today_str}_{date_range_str}.json"
+    json_filename = f"logs/daily_report_{today_str}_{date_range_str}.json"
     print(f"\n💾 保存数据到 {json_filename}...")
     save_to_json(new_events, json_filename)
     
     # 保存 CSV（使用去重后的新数据）
-    csv_filename = f"{args.output}/wechat_article_stats_{today_str}_{date_range_str}.csv"
+    csv_filename = f"logs/wechat_article_stats_{today_str}_{date_range_str}.csv"
     save_to_csv(new_events, csv_filename)
 
     # 上报到 GrowingIO
@@ -457,9 +479,10 @@ def main():
             state = load_report_state()
             reported_set = set(state.get("reported", []))
             for event in new_events:
+                org_id = event.get("orgId", "")
                 msgid_full = event.get("oa_articleId", "")
                 stat_date = event.get("_stat_date", "")
-                key = generate_report_key(msgid_full, stat_date)
+                key = generate_report_key(org_id, msgid_full, stat_date)
                 if key not in reported_set:
                     reported_set.add(key)
             state["reported"] = list(reported_set)
@@ -479,26 +502,20 @@ def send_dingtalk_notice(start_date, end_date, new_count, success_count, fail_co
     # 构建消息内容
     today = datetime.date.today()
     date_range = f"{start_date.strftime('%m/%d')} - {end_date.strftime('%m/%d')}"
+    hospital_name = OFFICIAL_ACCOUNT_NAME  # 使用配置中的医院名称
     
-    if duplicate_count > 0:
-        markdown_content = f"""# 📊 微信公众号数据抓取完成
+    markdown_content = f"""# 📊 微信公众号数据抓取完成
     
+## 🏥 医院名称
+**{hospital_name}**
+
 ## 📢 微信数据
 **📅 抓取日期范围：** {date_range}
 **📊 抓取总数：** {new_count + duplicate_count}
-**📝 新增数据条数：** {new_count}
-**📉 重复数据条数：** {duplicate_count}
-**✅ 上报成功：** {success_count}
-**❌ 上报失败：** {fail_count}
-**⏱️ 执行时间：** {today.strftime('%Y年%m月%d日')} """
-    else:
-        markdown_content = f"""# 📊 微信公众号数据抓取完成
-    
-## 📢 微信数据
-**📅 抓取日期范围：** {date_range}
-**📝 新增数据条数：** {new_count}
-**✅ 上报成功：** {success_count}
-**❌ 上报失败：** {fail_count}
+**📝 新增数据条数：** {new_count if new_count > 0 else 0}
+**📉 重复数据条数：** {duplicate_count if duplicate_count > 0 else 0}
+**✅ 上报成功：** {success_count if success_count > 0 else 0}
+**❌ 上报失败：** {fail_count if fail_count > 0 else 0}
 **⏱️ 执行时间：** {today.strftime('%Y年%m月%d日')} """
 
     import urllib.parse
