@@ -35,8 +35,8 @@ OPENAPI_CONFIG = {
 
 # GrowingIO 配置
 GROWINGIO_CONFIG = {
-    "product_id": "98b451a0ec02c41a",
-    "data_source_id": "b7f6d83f9c9734b6",
+    "product_id": "7e47aa8501d6f273",  # Account ID
+    "data_source_id": "a29f6e25eab3fe7a",  # Datasource ID
     "server_host": "https://ngari-collect.fenxiti.com/",
     "event_name": "OA_officialNewsDailyData3",
 }
