@@ -334,13 +334,17 @@ def upload_to_growio(events, debug=False, dry_run=False):
         fail_count = 0
 
         for i, event_attrs in enumerate(events, 1):
-            # 移除内部字段
-            clean_attrs = {k: v for k, v in event_attrs.items() if not k.startswith("_")}
+            # 提取 event_time
+            event_time = event_attrs.get("event_time")
+            
+            # 移除内部字段和 event_time
+            clean_attrs = {k: v for k, v in event_attrs.items() if not k.startswith("_") and k != "event_time"}
 
             print(f"[{i}/{len(events)}] ", end="")
             try:
                 tracker.track_custom_event(
                     GROWINGIO_CONFIG["event_name"],
+                    event_time=event_time,
                     attributes=clean_attrs,
                     anonymous_id='python',
                     login_user_id='12345'
