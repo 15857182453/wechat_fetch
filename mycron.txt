@@ -1,0 +1,11 @@
+# crontab 配置文件 - 微信公众号数据自动抓取与上报
+# 使用方法：crontab /home/openclaw/.openclaw/workspace/mycron.txt
+
+# 每天凌晨 2:00 执行自动抓取与上报
+0 2 * * * /home/openclaw/.openclaw/workspace/media-crawler/wechat-fetch-daily.sh >> /home/openclaw/.openclaw/workspace/logs/cron_wechat_fetch.log 2>&1
+
+# 每小时_chk_1_ 定期检查并上传新生成的日志文件到 GitHub
+0 * * * * cd /home/openclaw/.openclaw/workspace && git add logs/ && git commit -m "Update logs at $(date '+%Y-%m-%d %H:%M:%S')" && git push origin master >> /home/openclaw/.openclaw/workspace/logs/cron_git_sync.log 2>&1
+
+# 每周日凌晨 3:00 清理超过 30 天的旧日志文件
+0 3 * * 0 find /home/openclaw/.openclaw/workspace/logs -name "*.log" -mtime +30 -delete >> /home/openclaw/.openclaw/workspace/logs/cron_cleanup.log 2>&1
