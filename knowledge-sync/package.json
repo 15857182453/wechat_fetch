@@ -1,0 +1,13 @@
+{
+  "name": "feishu-knowledge-sync",
+  "version": "1.0.0",
+  "description": "飞书多维表格 → OpenClaw 知识库同步工具",
+  "main": "feishu-bitable-sync.js",
+  "scripts": {
+    "sync": "node feishu-bitable-sync.js",
+    "init": "cp config.example.js config.js && echo '请编辑 config.js 填入你的配置'"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}

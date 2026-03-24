@@ -1,0 +1,16 @@
+{
+  "name": "fenxiti-api",
+  "version": "1.0.0",
+  "description": "分心体数据分析平台 API 查询工具",
+  "main": "fenxiti-query.js",
+  "scripts": {
+    "query": "node fenxiti-query.js",
+    "event": "node fenxiti-query.js -t event",
+    "funnel": "node fenxiti-query.js -t funnel",
+    "retention": "node fenxiti-query.js -t retention",
+    "frequency": "node fenxiti-query.js -t frequency"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}
