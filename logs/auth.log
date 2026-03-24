@@ -1,0 +1,10 @@
+2026-03-24T08:56:05.300616+08:00 YKR systemd-logind[222]: New seat seat0.
+2026-03-24T08:56:05.336485+08:00 YKR (systemd): pam_unix(systemd-user:session): session opened for user openclaw(uid=1000) by openclaw(uid=0)
+2026-03-24T08:56:05.822876+08:00 YKR login[392]: PAM unable to dlopen(pam_lastlog.so): /usr/lib/security/pam_lastlog.so: cannot open shared object file: No such file or directory
+2026-03-24T08:56:05.822946+08:00 YKR login[392]: PAM adding faulty module: pam_lastlog.so
+2026-03-24T08:56:06.089955+08:00 YKR login[392]: pam_unix(login:session): session opened for user openclaw(uid=1000) by openclaw(uid=0)
+2026-03-24T08:56:06.092116+08:00 YKR systemd-logind[222]: New session 2 of user openclaw.
+2026-03-24T08:59:06.680515+08:00 YKR polkitd[1033]: Loading rules from directory /etc/polkit-1/rules.d
+2026-03-24T08:59:06.680663+08:00 YKR polkitd[1033]: Loading rules from directory /usr/share/polkit-1/rules.d
+2026-03-24T08:59:06.682760+08:00 YKR polkitd[1033]: Finished loading, compiling and executing 4 rules
+2026-03-24T08:59:06.683177+08:00 YKR polkitd[1033]: Acquired the name org.freedesktop.PolicyKit1 on the system bus
