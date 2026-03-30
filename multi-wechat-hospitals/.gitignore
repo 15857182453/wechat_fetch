@@ -19,3 +19,10 @@ hospitals/*/logs/wechat_article_stats_*.csv
 # OS
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
