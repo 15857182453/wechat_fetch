@@ -1,0 +1,71 @@
+# 多医院微信公众号数据抓取配置文件
+# 每个医院独立配置，支持批量执行
+
+hospitals:
+  # 医院1 - 杭州师范大学附属医院
+  - name: "杭州师范大学附属医院"
+    org_id: "1005657"
+    account_name: "杭州师范大学附属医院"
+    account_type: "订阅号"
+    appid: "wxb946acbb0c6d9de6"
+    openapi:
+      api_url: "https://openapi.ngarihealth.com/openapi/gateway"
+      app_key: "ngari5e93bcd7347bcc28"
+      app_secret: "347bcc28d2e9d26b"
+      wx_app_id: "wx530c8ee57cd2fa6e"
+    growingio:
+      product_id: "98b451a0ec02c41a"
+      data_source_id: "b7f6d83f9c9734b6"
+      server_host: "https://ngari-collect.fenxiti.com/"
+      event_name: "OA_officialNewsDailyData2"
+    output_dir: "hospitals/hospital_1"
+    dingtalk:
+      enabled: true
+      webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=84f55b1393f892b7859aca7692fc9e94a69280def75f72c90c1ebf40c9878e31"
+
+  # 医院2 - (示例配置，需要根据实际情况修改)
+  - name: "医院2名称"
+    org_id: "YOUR_HOSPITAL_2_ORG_ID"
+    account_name: "医院2公众号名称"
+    account_type: "订阅号"
+    appid: "YOUR_HOSPITAL_2_APPID"
+    openapi:
+      api_url: "https://openapi.ngarihealth.com/openapi/gateway"
+      app_key: "YOUR_HOSPITAL_2_APP_KEY"
+      app_secret: "YOUR_HOSPITAL_2_APP_SECRET"
+      wx_app_id: "YOUR_HOSPITAL_2_WX_APP_ID"
+    growingio:
+      product_id: "YOUR_HOSPITAL_2_PRODUCT_ID"
+      data_source_id: "YOUR_HOSPITAL_2_DATA_SOURCE_ID"
+      server_host: "https://ngari-collect.fenxiti.com/"
+      event_name: "OA_officialNewsDailyData2"
+    output_dir: "hospitals/hospital_2"
+    dingtalk:
+      enabled: false
+      webhook_url: ""
+
+  # 医院3 - (示例配置，需要根据实际情况修改)
+  - name: "医院3名称"
+    org_id: "YOUR_HOSPITAL_3_ORG_ID"
+    account_name: "医院3公众号名称"
+    account_type: "服务号"
+    appid: "YOUR_HOSPITAL_3_APPID"
+    openapi:
+      api_url: "https://openapi.ngarihealth.com/openapi/gateway"
+      app_key: "YOUR_HOSPITAL_3_APP_KEY"
+      app_secret: "YOUR_HOSPITAL_3_APP_SECRET"
+      wx_app_id: "YOUR_HOSPITAL_3_WX_APP_ID"
+    growingio:
+      product_id: "YOUR_HOSPITAL_3_PRODUCT_ID"
+      data_source_id: "YOUR_HOSPITAL_3_DATA_SOURCE_ID"
+      server_host: "https://ngari-collect.fenxiti.com/"
+      event_name: "OA_officialNewsDailyData2"
+    output_dir: "hospitals/hospital_3"
+    dingtalk:
+      enabled: false
+      webhook_url: ""
+
+# 全局设置
+settings:
+  default_date_range: 7  # 默认抓取最近7天
+  log_level: "INFO"
