@@ -49,7 +49,7 @@ hospitals:
   - name: "上海市中医医院"
     org_id: "1003041"
     account_name: "上海市中医医院"
-    account_type: "订阅号"
+    account_type: "公众号"
     appid: "wx7193cbf779af3716"
     wx_app_id: "wx7193cbf779af3716"
     openapi:
