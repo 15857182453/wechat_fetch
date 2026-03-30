@@ -23,47 +23,49 @@ hospitals:
       enabled: true
       webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=84f55b1393f892b7859aca7692fc9e94a69280def75f72c90c1ebf40c9878e31"
 
-  # 医院2 - (示例配置，需要根据实际情况修改)
-  - name: "医院2名称"
-    org_id: "YOUR_HOSPITAL_2_ORG_ID"
-    account_name: "医院2公众号名称"
+  # 医院2 - 浙江省中医院
+  - name: "浙江省中医院"
+    org_id: "1000017"
+    account_name: "浙江省中医院"
     account_type: "订阅号"
-    appid: "YOUR_HOSPITAL_2_APPID"
+    appid: "wx8554e9e0bf4893f8"
+    wx_app_id: "wx8554e9e0bf4893f8"
     openapi:
       api_url: "https://openapi.ngarihealth.com/openapi/gateway"
-      app_key: "YOUR_HOSPITAL_2_APP_KEY"
-      app_secret: "YOUR_HOSPITAL_2_APP_SECRET"
-      wx_app_id: "YOUR_HOSPITAL_2_WX_APP_ID"
+      app_key: "ngari5e93bcd7347bcc28"
+      app_secret: "347bcc28d2e9d26b"
+      wx_app_id: "wx8554e9e0bf4893f8"
     growingio:
-      product_id: "YOUR_HOSPITAL_2_PRODUCT_ID"
-      data_source_id: "YOUR_HOSPITAL_2_DATA_SOURCE_ID"
+      product_id: "98b451a0ec02c41a"
+      data_source_id: "b7f6d83f9c9734b6"
       server_host: "https://ngari-collect.fenxiti.com/"
       event_name: "OA_officialNewsDailyData2"
     output_dir: "hospitals/hospital_2"
     dingtalk:
-      enabled: false
-      webhook_url: ""
+      enabled: true
+      webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=84f55b1393f892b7859aca7692fc9e94a69280def75f72c90c1ebf40c9878e31"
 
-  # 医院3 - (示例配置，需要根据实际情况修改)
-  - name: "医院3名称"
-    org_id: "YOUR_HOSPITAL_3_ORG_ID"
-    account_name: "医院3公众号名称"
-    account_type: "服务号"
-    appid: "YOUR_HOSPITAL_3_APPID"
+  # 医院3 - 上海市中医医院
+  - name: "上海市中医医院"
+    org_id: "1003041"
+    account_name: "上海市中医医院"
+    account_type: "订阅号"
+    appid: "wx7193cbf779af3716"
+    wx_app_id: "wx7193cbf779af3716"
     openapi:
       api_url: "https://openapi.ngarihealth.com/openapi/gateway"
-      app_key: "YOUR_HOSPITAL_3_APP_KEY"
-      app_secret: "YOUR_HOSPITAL_3_APP_SECRET"
-      wx_app_id: "YOUR_HOSPITAL_3_WX_APP_ID"
+      app_key: "ngari5e93bcd7347bcc28"
+      app_secret: "347bcc28d2e9d26b"
+      wx_app_id: "wx7193cbf779af3716"
     growingio:
-      product_id: "YOUR_HOSPITAL_3_PRODUCT_ID"
-      data_source_id: "YOUR_HOSPITAL_3_DATA_SOURCE_ID"
+      product_id: "98b451a0ec02c41a"
+      data_source_id: "b7f6d83f9c9734b6"
       server_host: "https://ngari-collect.fenxiti.com/"
       event_name: "OA_officialNewsDailyData2"
     output_dir: "hospitals/hospital_3"
     dingtalk:
-      enabled: false
-      webhook_url: ""
+      enabled: true
+      webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=84f55b1393f892b7859aca7692fc9e94a69280def75f72c90c1ebf40c9878e31"
 
 # 全局设置
 settings:
