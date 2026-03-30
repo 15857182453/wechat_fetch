@@ -1,6 +1,7 @@
 # .gitignore for multi-wechat-hospitals
 # 医院配置文件包含敏感信息，不应该提交到 Git
-hospitals.yml
+# hospitals.yml 已提交到 Git，作为示例配置
+# hospitals.yml
 hospitals/*/logs/wechat_report_state.json
 hospitals/*/logs/daily_report_*.json
 hospitals/*/logs/wechat_article_stats_*.csv
