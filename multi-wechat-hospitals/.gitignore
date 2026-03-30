@@ -1,7 +1,9 @@
-# .gitignore for wechat-auto
+# .gitignore for multi-wechat-hospitals
 # 医院配置文件包含敏感信息，不应该提交到 Git
 hospitals.yml
 hospitals/*/logs/wechat_report_state.json
+hospitals/*/logs/daily_report_*.json
+hospitals/*/logs/wechat_article_stats_*.csv
 
 # 临时文件
 *.tmp
@@ -16,7 +18,3 @@ hospitals/*/logs/wechat_report_state.json
 # OS
 .DS_Store
 Thumbs.db
-
-# 日志文件（可选，如果不需要保留）
-# logs/
-# hospitals/*/logs/
