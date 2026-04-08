@@ -67,7 +67,9 @@ def run_single_hospital(hospital_config, args):
     ]
     
     # 日期范围参数
-    if args.start and args.end:
+    if hasattr(args, 'today') and args.today:
+        cmd_args.append("--today")
+    elif args.start and args.end:
         cmd_args.extend(["--start", args.start, "--end", args.end])
     elif args.days:
         cmd_args.extend(["--days", str(args.days)])
@@ -122,17 +124,19 @@ def main():
 配置文件: hospitals.yml
 示例:
   python3 run_hospitals.py              # 执行所有医院（默认最近7天）
-  python3 run_hospitals.py --days 14    # 执行所有医院最近14天
+  python3 run_hospitals.py --days 30    # 执行所有医院最近30天
   python3 run_hospitals.py --hospital "医院1名称"  # 指定医院
   python3 run_hospitals.py --start 2026-03-01 --end 2026-03-30  # 指定日期范围
+  python3 run_hospitals.py --today      # 抓取今天的数据
   python3 run_hospitals.py --dry-run    # 仅抓取不上传
         """
     )
     
     parser.add_argument("--config", default="hospitals.yml", help="配置文件路径（相对于脚本目录）")
-    parser.add_argument("--days", type=int, default=7, help="抓取最近N天")
+    parser.add_argument("--days", type=int, default=30, help="抓取最近N天")
     parser.add_argument("--start", type=str, help="开始日期 YYYY-MM-DD")
     parser.add_argument("--end", type=str, help="结束日期 YYYY-MM-DD")
+    parser.add_argument("--today", action="store_true", help="仅抓取今天")
     parser.add_argument("--dry-run", action="store_true", help="仅抓取不上报")
     parser.add_argument("--debug", action="store_true", help="调试模式")
     parser.add_argument("--hospital", type=str, help="指定医院名称（不指定则全部执行）")
