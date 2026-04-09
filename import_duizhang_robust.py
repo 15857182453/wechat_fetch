@@ -249,35 +249,36 @@ def import_data():
     cursor.execute(f"SELECT date FROM {TABLE_NAME}")
     existing_dates = set(row[0] for row in cursor.fetchall())
     
-    # 删除将要更新的已有记录（避免重复）
-    dates_to_update = [r['date'] for r in records if r['date'] in existing_dates]
-    if dates_to_update:
-        placeholders = ','.join('?' * len(dates_to_update))
-        cursor.execute(f'DELETE FROM {TABLE_NAME} WHERE date IN ({placeholders})', dates_to_update)
+    # 只导入新日期（增量模式）
+    new_records = [r for r in records if r['date'] not in existing_dates]
     
-    # 插入所有记录
-    cursor.executemany(insert_sql, records)
+    if not new_records:
+        print("ℹ️  没有新数据需要导入（所有日期已存在）")
+        print(f"📊 数据库现有 {len(existing_dates)} 条记录")
+        conn.close()
+        return
+    
+    # 插入新记录
+    cursor.executemany(insert_sql, new_records)
     conn.commit()
     
-    new_count = sum(1 for r in records if r['date'] not in existing_dates)
-    update_count = len(records) - new_count
+    print(f"➕ 新增 {len(new_records)} 条记录")
+    print(f"📊 数据库现有 {len(existing_dates) + len(new_records)} 条记录")
     
-    if update_count > 0:
-        print(f"📝 更新 {update_count} 条已有记录")
-    if new_count > 0:
-        print(f"➕ 新增 {new_count} 条记录")
+    # 显示新增的日期
+    print("\n📅 新增日期:")
+    for r in sorted(new_records, key=lambda x: x['date']):
+        print(f"   {r['date']}: 总计¥{r['daily_total_flow']:.2f}万")
     
-    print(f"\n✅ 共处理 {len(records):,} 条记录")
-    
-    # 删除未来日期的空数据
-    cursor.execute(f"""
-    DELETE FROM {TABLE_NAME}
-    WHERE date >= date('now') AND daily_total_flow = 0
-    """)
-    deleted = cursor.rowcount
-    if deleted > 0:
-        print(f"🗑️  删除 {deleted} 条未来日期的空记录")
-    conn.commit()
+    # 删除未来日期的空数据（可选，一般不需要）
+    # cursor.execute(f"""
+    # DELETE FROM {TABLE_NAME}
+    # WHERE date >= date('now') AND daily_total_flow = 0
+    # """)
+    # deleted = cursor.rowcount
+    # if deleted > 0:
+    #     print(f"🗑️  删除 {deleted} 条未来日期的空记录")
+    # conn.commit()
     
     # 验证结果
     print()

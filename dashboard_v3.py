@@ -46,7 +46,7 @@ def load_data():
             order_status,
             order_amount,
             province,
-            institution
+            prescribing_org as institution
         FROM ningxia_orders_2026_apr
         WHERE order_time != '' AND order_time != 'NaT'
     """, conn)
