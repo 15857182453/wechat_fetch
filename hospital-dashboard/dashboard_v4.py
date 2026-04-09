@@ -186,54 +186,78 @@ DB_PATH = "/home/openclaw/.openclaw/workspace/business_flow.db"
 # ========= 数据加载函数 =========
 @st.cache_data(ttl=30, show_spinner="🔄 正在加载医院数据...")
 def load_hospital_data():
-    with st.spinner("正在连接数据库并获取数据..."):
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+    """
+    数据加载逻辑：
+    1. 优先从明细表获取数据（按医院/日期分组）
+    2. 检查哪些日期在明细表中缺失
+    3. 仅从汇总表补充缺失的日期数据
+    """
+    conn = sqlite3.connect(DB_PATH)
+    
+    # Step 1: 从明细表获取数据（4 个表 UNION ALL）
+    table_names = ['daily_flow_2025', 'daily_flow_2026_jan_feb', 'daily_flow_2026_mar', 'daily_flow_2026_apr']
+    
+    queries = []
+    for table in table_names:
+        q = f"""
+            SELECT institution, 
+                   COUNT(*) as cnt, 
+                   SUM(amount) as amt, 
+                   ROUND(SUM(amount)/COUNT(*), 2) as avg_amt,
+                   SUBSTR(yewu_wancheng_shijian, 1, 10) as dt
+            FROM {table}
+            WHERE ye_wu_lei_mu LIKE '%处方服务%' AND pay_status = '收费'
+              AND yewu_wancheng_shijian IS NOT NULL AND amount IS NOT NULL
+            GROUP BY institution, SUBSTR(yewu_wancheng_shijian, 1, 10)
+        """
+        queries.append(q)
+    
+    # 执行明细查询
+    full_query = " UNION ALL ".join(queries)
+    df_detail = pd.read_sql_query(full_query, conn)
+    df_detail.columns = ['医院', '订单数', '金额', '客单价', '日期']
+    
+    # Step 2: 获取明细表已有的日期
+    existing_dates = set(df_detail['日期'].unique()) if len(df_detail) > 0 else set()
+    
+    # Step 3: 仅查询缺失日期的汇总数据（避免读取全部汇总表）
+    if len(existing_dates) > 0:
+        dates_placeholder = ','.join([f"'{d}'" for d in existing_dates])
+        q_missing = f"""
+            SELECT date as dt, daily_total_flow as amt
+            FROM duizhang_summary_2026
+            WHERE daily_total_flow > 0
+              AND date NOT IN ({dates_placeholder})
+        """
+    else:
+        # 明细表完全无数据时，读取全部汇总数据
+        q_missing = """
+            SELECT date as dt, daily_total_flow as amt
+            FROM duizhang_summary_2026
+            WHERE daily_total_flow > 0
+        """
+    
+    df_missing = pd.read_sql_query(q_missing, conn)
+    
+    # Step 4: 为缺失日期创建补充数据
+    if len(df_missing) > 0:
+        avg_orders = int(df_detail['订单数'].mean()) if len(df_detail) > 0 else 100
         
-        # 尝试从明细表获取数据
-        table_names = ['daily_flow_2025', 'daily_flow_2026_jan_feb', 'daily_flow_2026_mar', 'daily_flow_2026_apr']
+        df_missing['医院'] = '数据待补充'
+        df_missing['订单数'] = avg_orders
+        df_missing['金额'] = df_missing['amt'] * 10000  # 汇总表万元→元
+        df_missing['客单价'] = (df_missing['金额'] / avg_orders).round(2) if avg_orders > 0 else 0
+        df_missing['日期'] = df_missing['dt']
+        df_missing = df_missing[['医院', '订单数', '金额', '客单价', '日期']]
         
-        queries = []
-        for table in table_names:
-            try:
-                q = f"""
-                    SELECT institution, 
-                           COUNT(*) as cnt, 
-                           SUM(amount) as amt, 
-                           ROUND(SUM(amount)*1.0/COUNT(*), 2) as avg_amt,
-                           SUBSTR(yewu_wancheng_shijian, 1, 10) as dt
-                    FROM {table}
-                    WHERE ye_wu_lei_mu LIKE '%处方服务%' AND pay_status = '收费'
-                      AND yewu_wancheng_shijian IS NOT NULL AND amount IS NOT NULL
-                    GROUP BY institution, SUBSTR(yewu_wancheng_shijian, 1, 10)
-                """
-                queries.append(q)
-            except Exception as e:
-                pass
-        
-        # 如果明细表数据不足，使用汇总数据
-        if not queries:
-            # 从 duizhang_summary_2026 获取汇总数据
-            q = """
-                SELECT '汇总数据' as institution,
-                       1 as cnt,
-                       daily_total_flow as amt,
-                       daily_total_flow as avg_amt,
-                       date as dt
-                FROM duizhang_summary_2026
-                WHERE date >= '2026-03-01' AND daily_total_flow > 0
-            """
-            queries.append(q)
-        
-        if not queries:
-            conn.close()
-            return pd.DataFrame(columns=['医院', '订单数', '金额', '客单价', '日期'])
-        
-        full_query = " UNION ALL ".join(queries) + " ORDER BY dt DESC, amt DESC"
-        df = pd.read_sql_query(full_query, conn)
-        df.columns = ['医院', '订单数', '金额', '客单价', '日期']
-        conn.close()
-        return df
+        # 合并明细数据 + 汇总补充数据
+        df = pd.concat([df_detail, df_missing], ignore_index=True)
+    else:
+        # 明细表数据完整，无需补充
+        df = df_detail
+    
+    conn.close()
+    return df
 
 # ========= 环比计算函数 =========
 def calculate_mom_growth():
@@ -407,17 +431,36 @@ with tab1:
     
     total_orders = df_date['订单数'].sum() if not df_date.empty else 0
     total_amount = df_date['金额'].sum() if not df_date.empty else 0
-    avg_amount = df_date['客单价'].mean() if not df_date.empty and len(df_date) > 0 else 0
+    avg_amount = total_amount / total_orders if total_orders > 0 else 0
     active_hospitals = len(df_date) if not df_date.empty else 0
+    
+    # 计算与前一天的对比
+    from datetime import datetime, timedelta
+    try:
+        current_dt = datetime.strptime(selected_date_str, '%Y-%m-%d')
+        prev_date_str = (current_dt - timedelta(days=1)).strftime('%Y-%m-%d')
+        df_prev = df_filtered[df_filtered['日期'] == prev_date_str]
+        
+        prev_orders = df_prev['订单数'].sum() if not df_prev.empty else 0
+        prev_amount = df_prev['金额'].sum() if not df_prev.empty else 0
+        prev_avg = prev_amount / prev_orders if prev_orders > 0 else 0
+        
+        orders_delta = ((total_orders - prev_orders) / prev_orders * 100) if prev_orders > 0 else None
+        amount_delta = ((total_amount - prev_amount) / prev_amount * 100) if prev_amount > 0 else None
+        avg_delta = ((avg_amount - prev_avg) / prev_avg * 100) if prev_avg > 0 else None
+    except:
+        orders_delta = None
+        amount_delta = None
+        avg_delta = None
     
     with col1:
         st.markdown('<div class="fade-in">', unsafe_allow_html=True)
         st.metric(
             label="🎫 总订单数",
             value=f"{int(total_orders):,}",
-            delta=f"+{(total_orders/len(df_date)*0.1):.1f}" if not df_date.empty else "0",
+            delta=f"{orders_delta:+.1f}%" if orders_delta is not None else None,
             delta_color="normal",
-            help="当日所有医院的订单总数"
+            help="与前一日对比"
         )
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -426,9 +469,9 @@ with tab1:
         st.metric(
             label="💰 总金额",
             value=f"¥{total_amount:,.0f}",
-            delta=f"+{(total_amount/len(df_date)*0.05):.1f}" if not df_date.empty and len(df_date) > 0 else "0",
+            delta=f"{amount_delta:+.1f}%" if amount_delta is not None else None,
             delta_color="normal",
-            help="当日交易总金额"
+            help="与前一日对比（元）"
         )
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -437,9 +480,9 @@ with tab1:
         st.metric(
             label="🏷️ 平均客单价",
             value=f"¥{avg_amount:,.2f}",
-            delta=f"+{(avg_amount*0.02):.2f}" if avg_amount > 0 else "0",
+            delta=f"{avg_delta:+.1f}%" if avg_delta is not None else None,
             delta_color="normal",
-            help="每笔订单的平均消费金额"
+            help="每笔订单平均消费金额（元），与前一日对比"
         )
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -448,8 +491,7 @@ with tab1:
         st.metric(
             label="🏥 覆盖医院",
             value=f"{active_hospitals} 家",
-            delta=f"+{min(active_hospitals, 2)}",
-            delta_color="normal",
+            delta=None,
             help="参与当日报表的医院数量"
         )
         st.markdown('</div>', unsafe_allow_html=True)
@@ -458,8 +500,9 @@ with tab1:
     if not df_date.empty:
         st.divider()
         st.markdown("### 🏥 当日医院明细")
-        df_rich = df_date[['医院', '订单数', '金额', '客单价']].round(2)
+        df_rich = df_date[['医院', '订单数', '金额', '客单价']].sort_values('订单数', ascending=False).reset_index(drop=True).copy()
         df_rich['订单数'] = df_rich['订单数'].astype(int)
+        # 金额和客单价已统一为元，无需转换
         
         # 创建表格样式
         def color_row(row):
@@ -469,7 +512,9 @@ with tab1:
         st.dataframe(
             df_rich.style.apply(color_row, axis=1).format({
                 '金额': '¥{:,}',
-                '客单价': '¥{:.2f}'
+                '客单价': '¥{:.2f}',
+                '金额': '¥{:,.0f}',
+                '订单数': '{:,.0f}'
             }),
             use_container_width=True,
             hide_index=True,
@@ -487,16 +532,20 @@ with tab2:
         date_range = pd.date_range(end=selected_dt, periods=7, freq='D')
         date_strings = [d.strftime('%Y-%m-%d') for d in date_range]
         
-        # 按日期聚合数据
-        df_temp = df_filtered[df_filtered['日期'].isin(date_strings)]
+        # 按日期聚合数据（排除"数据待补充"的汇总数据，避免重复计算）
+        df_detail_only = df_filtered[df_filtered['医院'] != '数据待补充']
+        df_temp = df_detail_only[df_detail_only['日期'].isin(date_strings)]
+        
+        # 各医院趋势（明细数据）
         daily_trends = df_temp.groupby(['日期', '医院']).agg({
             '订单数': 'sum',
             '金额': 'sum',
             '客单价': 'mean'
         }).reset_index()
         
-        # 按日期进一步聚合（不分医院，用于总量趋势）
-        daily_totals = df_temp.groupby('日期').agg({
+        # 按日期聚合总量（含汇总补充数据）
+        df_temp_all = df_filtered[df_filtered['日期'].isin(date_strings)]
+        daily_totals = df_temp_all.groupby('日期').agg({
             '订单数': 'sum',
             '金额': 'sum',
             '客单价': 'mean'
@@ -547,13 +596,16 @@ with tab2:
             st.markdown("### 🏥 各医院详细趋势")
             
             if not daily_trends.empty:
-                # 分医院的趋势图
+                # 按总订单数取 TOP 15 医院，避免图表混乱
+                top_hospitals = daily_trends.groupby('医院')['订单数'].sum().nlargest(15).index.tolist()
+                df_top = daily_trends[daily_trends['医院'].isin(top_hospitals)]
+                
                 fig_detail = px.line(
-                    daily_trends,
+                    df_top,
                     x='日期',
                     y='订单数',
-                    color='医院' if len(daily_trends['医院'].unique()) <= 10 else None,
-                    title='各医院订单数趋势对比',
+                    color='医院',
+                    title='各医院订单数趋势对比 (TOP 15)',
                     markers=True,
                     line_shape='spline',
                     color_discrete_sequence=px.colors.qualitative.Set3
@@ -569,11 +621,11 @@ with tab2:
                 
                 # 各医院营收趋势
                 fig_revenue_compare = px.line(
-                    daily_trends,
+                    df_top,
                     x='日期',
                     y='金额',
-                    color='医院' if len(daily_trends['医院'].unique()) <= 10 else None,
-                    title='各医院营业额趋势对比',
+                    color='医院',
+                    title='各医院营业额趋势对比 (TOP 15)',
                     markers=True,
                     line_shape='spline',
                     color_discrete_sequence=px.colors.qualitative.Set3
@@ -602,88 +654,83 @@ with tab3:
         
         with st.spinner("🤖 正在执行异常检测分析..."):
             for idx, hospital in enumerate(all_hospitals):
-                # 获取近 7 天数据
+                # 获取近 7 天数据（检测所有日期，而非仅选中日期）
                 hosp_data = df_hospital[df_hospital['医院'] == hospital].sort_values('日期', ascending=False).head(7)
                 if len(hosp_data) < 2:
                     continue
                 
                 # 按日期聚合
                 daily = hosp_data.groupby('日期').agg({'订单数': 'sum', '金额': 'sum'}).reset_index()
-                if len(daily) < 2:
+                if len(daily) < 3:  # 至少需要3天才能检测异常
                     continue
                 
-                # 获取今日数据
-                today = daily[daily['日期'] == selected_date_str]
-                if today.empty:
-                    continue
-                
-                today_orders = int(today.iloc[0]['订单数'])
-                today_amount = float(today.iloc[0]['金额'])
-                
-                # 计算统计指标（排除今日数据）
-                other_days = daily[daily['日期'] != selected_date_str]['订单数']
-                
-                if len(other_days) < 2:
-                    continue
-                
-                mean_orders = other_days.mean()
-                median_orders = other_days.median()
-                std_orders = other_days.std()
-                
-                q1_orders = other_days.quantile(0.25)
-                q3_orders = other_days.quantile(0.75)
-                iqr_orders = q3_orders - q1_orders
-                upper_bound = q3_orders + 2.5 * iqr_orders  # 更宽松的IQR
-                
-                # 动态阈值（更宽松）
-                dynamic_threshold = max(
-                    median_orders * 2.0,
-                    mean_orders + 3 * std_orders
-                )
-                dynamic_threshold = max(dynamic_threshold, 50)
-                
-                # 多算法检测逻辑
-                anomaly_flags = []
-                # 检查每个算法的触发条件
-                if std_orders and std_orders > 0:
-                    zscore = (today_orders - mean_orders) / std_orders
-                    if abs(zscore) > 3.0:  # 3σ 规则
-                        anomaly_flags.append(f'🔴 Z-Score={zscore:.2f}')
-                
-                if today_orders > upper_bound:
-                    anomaly_flags.append(f'🟠 IQR>{upper_bound:.0f}')
-                
-                if today_orders >= 20 and today_orders > dynamic_threshold:
-                    anomaly_flags.append(f'🟢 动态>{dynamic_threshold:.0f}')
-                
-                # 环比增长检测
-                prev_day_data = daily[daily['日期'] < selected_date_str].sort_values('日期', ascending=False)
-                if not prev_day_data.empty and prev_day_data.iloc[0]['订单数'] >= 10:
-                    prev_orders = prev_day_data.iloc[0]['订单数']
-                    if prev_orders > 0:
-                        growth_rate = (today_orders - prev_orders) / prev_orders * 100
-                        if growth_rate > 200:
-                            anomaly_flags.append(f'🔵 环比+{growth_rate:.0f}%')
-                
-                # 所有算法都检测到异常才标记
-                if len(anomaly_flags) >= 2 and len([f for f in anomaly_flags if 'IQR' not in f or len(anomaly_flags) > 1]):  # 至少2个检测器确认
-                    anomalies.append({
-                        '医院': hospital,
-                        '日期': selected_date_str,
-                        '订单数': today_orders,
-                        '金额': today_amount,
-                        '异常类型': anomaly_flags,
-                        '均值': float(mean_orders),
-                        '标准差': float(std_orders),
-                        'IQR上限': float(upper_bound),
+                # 对每一天进行检测（而非仅检测选中日期）
+                for _, today_row in daily.iterrows():
+                    check_date = today_row['日期']
+                    today_orders = int(today_row['订单数'])
+                    today_amount = float(today_row['金额'])
+                    
+                    # 计算统计指标（排除当天数据）
+                    other_days = daily[daily['日期'] != check_date]['订单数']
+                    if len(other_days) < 2:
+                        continue
+                    
+                    mean_orders = other_days.mean()
+                    median_orders = other_days.median()
+                    std_orders = other_days.std()
+                    
+                    q1_orders = other_days.quantile(0.25)
+                    q3_orders = other_days.quantile(0.75)
+                    iqr_orders = q3_orders - q1_orders
+                    upper_bound = q3_orders + 2.5 * iqr_orders
+                    
+                    dynamic_threshold = max(median_orders * 2.0, mean_orders + 3 * std_orders)
+                    dynamic_threshold = max(dynamic_threshold, 50)
+                    
+                    # 多算法检测
+                    anomaly_flags = []
+                    if std_orders and std_orders > 0:
+                        zscore = (today_orders - mean_orders) / std_orders
+                        if abs(zscore) > 3.0:
+                            anomaly_flags.append(f'🔴 Z-Score={zscore:.2f}')
+                    
+                    if today_orders > upper_bound:
+                        anomaly_flags.append(f'🟠 IQR>{upper_bound:.0f}')
+                    
+                    if today_orders >= 20 and today_orders > dynamic_threshold:
+                        anomaly_flags.append(f'🟢 动态>{dynamic_threshold:.0f}')
+                    
+                    # 环比增长检测
+                    prev_day_data = daily[daily['日期'] < check_date].sort_values('日期', ascending=False)
+                    if not prev_day_data.empty and prev_day_data.iloc[0]['订单数'] >= 10:
+                        prev_orders = prev_day_data.iloc[0]['订单数']
+                        if prev_orders > 0:
+                            growth_rate = (today_orders - prev_orders) / prev_orders * 100
+                            if growth_rate > 200:
+                                anomaly_flags.append(f'🔵 环比+{growth_rate:.0f}%')
+                    
+                    # 至少2个检测器确认才标记异常
+                    if len(anomaly_flags) >= 2:
+                        anomalies.append({
+                            '医院': hospital,
+                            '日期': check_date,
+                            '订单数': today_orders,
+                            '金额': today_amount,
+                            '异常类型': anomaly_flags,
+                            '均值': float(mean_orders),
+                            '标准差': float(std_orders),
+                            'IQR上限': float(upper_bound),
                         '动态阈值': float(dynamic_threshold),
                         '检测算法数': len(anomaly_flags)
                     })
         
+        # 按选中日期过滤异常数据
+        anomalies_filtered = [a for a in anomalies if a['日期'] == selected_date_str]
+        
         # 显示异常结果
-        if anomalies:
-            st.error(f"🚨 发现 **{len(anomalies)}** 个医院存在显著异常波动！")
-            for i, a in enumerate(anomalies):
+        if anomalies_filtered:
+            st.error(f"🚨 **{selected_date_str}** 发现 **{len(anomalies_filtered)}** 个医院存在显著异常波动！")
+            for i, a in enumerate(anomalies_filtered):
                 anomaly_types = " | ".join(a['异常类型'])
                 expander_title = f"🏥 异常医院：{a['医院']} | 📦 {a['订单数']:,} 单 | 💰 ¥{a['金额']:,.0f} | 🔍 {a['检测算法数']}种预警"
                 
@@ -730,7 +777,7 @@ with tab3:
                         )
                         st.plotly_chart(fig, use_container_width=True)
         else:
-            st.success(f"✅ 所有 {len(all_hospitals)} 家医院数据正常，未检测到批量异常波动！系统运行稳定")
+            st.success(f"✅ **{selected_date_str}** 所有 {len(all_hospitals)} 家医院数据正常，未检测到异常波动")
     else:
         st.warning("⚠️ 暂无有效数据可供异常检测分析")
 
@@ -744,57 +791,39 @@ with tab4:
         with tab4_sub1:
             df_top_revenue = df_date.sort_values('金额', ascending=False).head(10)
             if not df_top_revenue.empty:
-                fig_rev = px.bar(
-                    df_top_revenue,
-                    x='金额',
-                    y='医院',
-                    orientation='h',
-                    title='营业额排行榜 (TOP 10)',
-                    color='金额',
-                    color_continuous_scale='viridis',
-                    text='金额'
+                st.dataframe(
+                    df_top_revenue[['医院', '订单数', '金额', '客单价']].rename(
+                        columns={'医院':'医院', '订单数':'订单数', '金额':'金额(元)', '客单价':'客单价(元)'}
+                    ).reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True
                 )
-                fig_rev.update_traces(texttemplate='¥%{text:,.0f}', textposition='auto')
-                fig_rev.update_layout(height=500)
-                st.plotly_chart(fig_rev, use_container_width=True)
             else:
                 st.info("🔍 当日无营业额排名数据")
         
         with tab4_sub2:
             df_top_orders = df_date.sort_values('订单数', ascending=False).head(10)
             if not df_top_orders.empty:
-                fig_ord = px.bar(
-                    df_top_orders,
-                    x='订单数',
-                    y='医院',
-                    orientation='h',
-                    title='订单量排行榜 (TOP 10)',
-                    color='订单数',
-                    color_continuous_scale='Blues',
-                    text='订单数'
+                st.dataframe(
+                    df_top_orders[['医院', '订单数', '金额', '客单价']].rename(
+                        columns={'医院':'医院', '订单数':'订单数', '金额':'金额(元)', '客单价':'客单价(元)'}
+                    ).reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True
                 )
-                fig_ord.update_traces(texttemplate='%{text:,}', textposition='auto')
-                fig_ord.update_layout(height=500)
-                st.plotly_chart(fig_ord, use_container_width=True)
             else:
                 st.info("🔍 当日无订单量排名数据")
         
         with tab4_sub3:
             df_top_price = df_date.sort_values('客单价', ascending=False).head(10)
             if not df_top_price.empty:
-                fig_avg = px.bar(
-                    df_top_price,
-                    x='客单价',
-                    y='医院',
-                    orientation='h',
-                    title='客单价排行榜 (TOP 10)',
-                    color='客单价',
-                    color_continuous_scale='Oranges',
-                    text='客单价'
+                st.dataframe(
+                    df_top_price[['医院', '订单数', '金额', '客单价']].rename(
+                        columns={'医院':'医院', '订单数':'订单数', '金额':'金额(元)', '客单价':'客单价(元)'}
+                    ).reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True
                 )
-                fig_avg.update_traces(texttemplate='¥%{text:.2f}', textposition='auto')
-                fig_avg.update_layout(height=500)
-                st.plotly_chart(fig_avg, use_container_width=True)
             else:
                 st.info("🔍 当日无客单价排名数据")
     else:
