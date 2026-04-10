@@ -538,7 +538,7 @@ with tab2:
                     template='plotly_white',
                     height=350,
                     xaxis_title='日期',
-                    yaxis_title='金额 (万元)',
+                    yaxis_title='金额 (元)',
                     hovermode='x unified'
                 )
                 st.plotly_chart(fig_revenue, use_container_width=True)
@@ -547,13 +547,17 @@ with tab2:
             st.markdown("### 🏥 各医院详细趋势")
             
             if not daily_trends.empty:
+                # 只显示 TOP 15 医院（避免线条过多重叠）
+                top_hospitals = daily_trends.groupby('医院')['订单数'].sum().nlargest(15).index.tolist()
+                daily_top = daily_trends[daily_trends['医院'].isin(top_hospitals)]
+                
                 # 分医院的趋势图
                 fig_detail = px.line(
-                    daily_trends,
+                    daily_top,
                     x='日期',
                     y='订单数',
-                    color='医院' if len(daily_trends['医院'].unique()) <= 10 else None,
-                    title='各医院订单数趋势对比',
+                    color='医院',
+                    title='各医院订单数趋势对比（TOP 15）',
                     markers=True,
                     line_shape='spline',
                     color_discrete_sequence=px.colors.qualitative.Set3
@@ -569,11 +573,11 @@ with tab2:
                 
                 # 各医院营收趋势
                 fig_revenue_compare = px.line(
-                    daily_trends,
+                    daily_top,
                     x='日期',
                     y='金额',
-                    color='医院' if len(daily_trends['医院'].unique()) <= 10 else None,
-                    title='各医院营业额趋势对比',
+                    color='医院',
+                    title='各医院营业额趋势对比（TOP 15）',
                     markers=True,
                     line_shape='spline',
                     color_discrete_sequence=px.colors.qualitative.Set3
@@ -582,7 +586,7 @@ with tab2:
                     template='plotly_white',
                     height=400,
                     xaxis_title='日期',
-                    yaxis_title='金额 (万元)',
+                    yaxis_title='金额 (元)',
                     hovermode='x unified'
                 )
                 st.plotly_chart(fig_revenue_compare, use_container_width=True)
