@@ -1,5 +1,18 @@
 # HEARTBEAT.md
 
-# Keep this file empty (or with only comments) to skip heartbeat API calls.
+## 🧠 记忆维护（每 3 小时）
+- [ ] 检查 memory/2026-04-13.md 是否有新内容需要追加
+- [ ] 如有重要任务/规则变更，蒸馏到 MEMORY.md
+- [ ] 更新 memory/heartbeat-state.json 记录时间
 
-# Add tasks below when you want the agent to check something periodically.
+## 📊 数据检查（每日 2 次）
+- [ ] 检查汇总表是否有新数据（新流水 2026.xlsx）
+- [ ] 检查明细表是否需要导入
+
+## ⏰ 时间规则
+- 08:00-22:00：正常检查
+- 22:00-08:00：仅紧急事项
+
+---
+
+# 其他心跳任务留空时跳过

@@ -11,6 +11,7 @@ import sqlite3
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 
 # ========= 页面配置 =========
@@ -186,78 +187,54 @@ DB_PATH = "/home/openclaw/.openclaw/workspace/business_flow.db"
 # ========= 数据加载函数 =========
 @st.cache_data(ttl=30, show_spinner="🔄 正在加载医院数据...")
 def load_hospital_data():
-    """
-    数据加载逻辑：
-    1. 优先从明细表获取数据（按医院/日期分组）
-    2. 检查哪些日期在明细表中缺失
-    3. 仅从汇总表补充缺失的日期数据
-    """
-    conn = sqlite3.connect(DB_PATH)
-    
-    # Step 1: 从明细表获取数据（4 个表 UNION ALL）
-    table_names = ['daily_flow_2025', 'daily_flow_2026_jan_feb', 'daily_flow_2026_mar', 'daily_flow_2026_apr']
-    
-    queries = []
-    for table in table_names:
-        q = f"""
-            SELECT institution, 
-                   COUNT(*) as cnt, 
-                   SUM(amount) as amt, 
-                   ROUND(SUM(amount)/COUNT(*), 2) as avg_amt,
-                   SUBSTR(yewu_wancheng_shijian, 1, 10) as dt
-            FROM {table}
-            WHERE ye_wu_lei_mu LIKE '%处方服务%' AND pay_status = '收费'
-              AND yewu_wancheng_shijian IS NOT NULL AND amount IS NOT NULL
-            GROUP BY institution, SUBSTR(yewu_wancheng_shijian, 1, 10)
-        """
-        queries.append(q)
-    
-    # 执行明细查询
-    full_query = " UNION ALL ".join(queries)
-    df_detail = pd.read_sql_query(full_query, conn)
-    df_detail.columns = ['医院', '订单数', '金额', '客单价', '日期']
-    
-    # Step 2: 获取明细表已有的日期
-    existing_dates = set(df_detail['日期'].unique()) if len(df_detail) > 0 else set()
-    
-    # Step 3: 仅查询缺失日期的汇总数据（避免读取全部汇总表）
-    if len(existing_dates) > 0:
-        dates_placeholder = ','.join([f"'{d}'" for d in existing_dates])
-        q_missing = f"""
-            SELECT date as dt, daily_total_flow as amt
-            FROM duizhang_summary_2026
-            WHERE daily_total_flow > 0
-              AND date NOT IN ({dates_placeholder})
-        """
-    else:
-        # 明细表完全无数据时，读取全部汇总数据
-        q_missing = """
-            SELECT date as dt, daily_total_flow as amt
-            FROM duizhang_summary_2026
-            WHERE daily_total_flow > 0
-        """
-    
-    df_missing = pd.read_sql_query(q_missing, conn)
-    
-    # Step 4: 为缺失日期创建补充数据
-    if len(df_missing) > 0:
-        avg_orders = int(df_detail['订单数'].mean()) if len(df_detail) > 0 else 100
+    with st.spinner("正在连接数据库并获取数据..."):
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
         
-        df_missing['医院'] = '数据待补充'
-        df_missing['订单数'] = avg_orders
-        df_missing['金额'] = df_missing['amt'] * 10000  # 汇总表万元→元
-        df_missing['客单价'] = (df_missing['金额'] / avg_orders).round(2) if avg_orders > 0 else 0
-        df_missing['日期'] = df_missing['dt']
-        df_missing = df_missing[['医院', '订单数', '金额', '客单价', '日期']]
+        # 尝试从明细表获取数据
+        table_names = ['daily_flow_2025', 'daily_flow_2026_jan_feb', 'daily_flow_2026_mar', 'daily_flow_2026_apr']
         
-        # 合并明细数据 + 汇总补充数据
-        df = pd.concat([df_detail, df_missing], ignore_index=True)
-    else:
-        # 明细表数据完整，无需补充
-        df = df_detail
-    
-    conn.close()
-    return df
+        queries = []
+        for table in table_names:
+            try:
+                q = f"""
+                    SELECT institution, 
+                           COUNT(*) as cnt, 
+                           SUM(amount) as amt, 
+                           ROUND(SUM(amount)*1.0/COUNT(*), 2) as avg_amt,
+                           SUBSTR(yewu_wancheng_shijian, 1, 10) as dt
+                    FROM {table}
+                    WHERE ye_wu_lei_mu LIKE '%处方服务%' AND pay_status = '收费'
+                      AND yewu_wancheng_shijian IS NOT NULL AND amount IS NOT NULL
+                    GROUP BY institution, SUBSTR(yewu_wancheng_shijian, 1, 10)
+                """
+                queries.append(q)
+            except Exception as e:
+                pass
+        
+        # 如果明细表数据不足，使用汇总数据
+        if not queries:
+            # 从 duizhang_summary_2026 获取汇总数据
+            q = """
+                SELECT '汇总数据' as institution,
+                       1 as cnt,
+                       daily_total_flow as amt,
+                       daily_total_flow as avg_amt,
+                       date as dt
+                FROM duizhang_summary_2026
+                WHERE date >= '2026-03-01' AND daily_total_flow > 0
+            """
+            queries.append(q)
+        
+        if not queries:
+            conn.close()
+            return pd.DataFrame(columns=['医院', '订单数', '金额', '客单价', '日期'])
+        
+        full_query = " UNION ALL ".join(queries) + " ORDER BY dt DESC, amt DESC"
+        df = pd.read_sql_query(full_query, conn)
+        df.columns = ['医院', '订单数', '金额', '客单价', '日期']
+        conn.close()
+        return df
 
 # ========= 环比计算函数 =========
 def calculate_mom_growth():
@@ -266,11 +243,10 @@ def calculate_mom_growth():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # 获取 2026 年最新数据日期
+        # 获取 2026 年最新数据日期（排除今天及未来日期的空数据，只取到昨天）
         cursor.execute("""
-            SELECT MAX(date) FROM (
-                SELECT MAX(date) as date FROM duizhang_summary_2026
-            )
+            SELECT MAX(date) FROM duizhang_summary_2026 
+            WHERE date < date('now') AND daily_total_flow > 0
         """)
         latest_date = cursor.fetchone()[0]
         
@@ -412,14 +388,15 @@ if selected_hospitals:
     df_filtered = df_hospital[df_hospital['医院'].isin(selected_hospitals)]
 df_date = df_filtered[df_filtered['日期'] == selected_date_str]
 
-# ========== 标签页布局 (6 个功能页签) ==========
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+# ========== 标签页布局 (7 个功能页签) ==========
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 **总览分析**", 
     "📈 **趋势洞察**", 
     "⚠️ **异常监控**", 
     "🏆 **医院排行**", 
-    "🌍 **区域分布**", 
-    "📉 **月度环比**"
+    "🌍 **区域分布", 
+    "📉 **月度环比**",
+    "💊 **便捷配药**"
 ])
 
 # ========== TAB 1: 总览分析 ==========
@@ -429,38 +406,42 @@ with tab1:
     # KPI 指标行
     col1, col2, col3, col4 = st.columns(4)
     
-    total_orders = df_date['订单数'].sum() if not df_date.empty else 0
-    total_amount = df_date['金额'].sum() if not df_date.empty else 0
-    avg_amount = total_amount / total_orders if total_orders > 0 else 0
+    total_orders = int(df_date['订单数'].sum()) if not df_date.empty else 0
+    total_amount = float(df_date['金额'].sum()) if not df_date.empty else 0
+    avg_amount = float(df_date['客单价'].mean()) if not df_date.empty and len(df_date) > 0 else 0
     active_hospitals = len(df_date) if not df_date.empty else 0
     
-    # 计算与前一天的对比
-    from datetime import datetime, timedelta
-    try:
-        current_dt = datetime.strptime(selected_date_str, '%Y-%m-%d')
-        prev_date_str = (current_dt - timedelta(days=1)).strftime('%Y-%m-%d')
-        df_prev = df_filtered[df_filtered['日期'] == prev_date_str]
-        
-        prev_orders = df_prev['订单数'].sum() if not df_prev.empty else 0
-        prev_amount = df_prev['金额'].sum() if not df_prev.empty else 0
-        prev_avg = prev_amount / prev_orders if prev_orders > 0 else 0
-        
-        orders_delta = ((total_orders - prev_orders) / prev_orders * 100) if prev_orders > 0 else None
-        amount_delta = ((total_amount - prev_amount) / prev_amount * 100) if prev_amount > 0 else None
-        avg_delta = ((avg_amount - prev_avg) / prev_avg * 100) if prev_avg > 0 else None
-    except:
-        orders_delta = None
-        amount_delta = None
-        avg_delta = None
+    # 计算与前一天的真实对比
+    prev_dt = pd.to_datetime(selected_date_str) - pd.Timedelta(days=1)
+    prev_date_str = prev_dt.strftime('%Y-%m-%d')
+    df_prev = df_filtered[df_filtered['日期'] == prev_date_str]
+    prev_orders = int(df_prev['订单数'].sum()) if not df_prev.empty else 0
+    prev_amount = float(df_prev['金额'].sum()) if not df_prev.empty else 0
+    prev_avg = float(df_prev['客单价'].mean()) if not df_prev.empty and len(df_prev) > 0 else 0
+    prev_hospitals = len(df_prev) if not df_prev.empty else 0
+    
+    def fmt_delta(curr, prev, is_int=True):
+        if prev == 0:
+            return None
+        diff = round(curr - prev, 2)
+        pct = round((diff / prev * 100) if prev != 0 else 0, 1)
+        if is_int:
+            return f"{diff:+,} ({pct:+.1f}%)"
+        return f"{diff:+,.2f} ({pct:+.1f}%)"
+    
+    orders_delta = fmt_delta(total_orders, prev_orders)
+    amount_delta = fmt_delta(total_amount, prev_amount)
+    avg_delta = fmt_delta(avg_amount, prev_avg, is_int=False)
+    hosp_delta = f"{active_hospitals - prev_hospitals:+d}" if prev_hospitals > 0 else None
     
     with col1:
         st.markdown('<div class="fade-in">', unsafe_allow_html=True)
         st.metric(
             label="🎫 总订单数",
-            value=f"{int(total_orders):,}",
-            delta=f"{orders_delta:+.1f}%" if orders_delta is not None else None,
+            value=f"{total_orders:,}",
+            delta=orders_delta,
             delta_color="normal",
-            help="与前一日对比"
+            help="当日所有医院的订单总数"
         )
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -469,9 +450,9 @@ with tab1:
         st.metric(
             label="💰 总金额",
             value=f"¥{total_amount:,.0f}",
-            delta=f"{amount_delta:+.1f}%" if amount_delta is not None else None,
+            delta=amount_delta,
             delta_color="normal",
-            help="与前一日对比（元）"
+            help="当日交易总金额"
         )
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -479,10 +460,10 @@ with tab1:
         st.markdown('<div class="fade-in">', unsafe_allow_html=True)
         st.metric(
             label="🏷️ 平均客单价",
-            value=f"¥{avg_amount:,.2f}",
-            delta=f"{avg_delta:+.1f}%" if avg_delta is not None else None,
+            value=f"¥{avg_amount:.2f}",
+            delta=avg_delta,
             delta_color="normal",
-            help="每笔订单平均消费金额（元），与前一日对比"
+            help="每笔订单的平均消费金额"
         )
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -491,7 +472,8 @@ with tab1:
         st.metric(
             label="🏥 覆盖医院",
             value=f"{active_hospitals} 家",
-            delta=None,
+            delta=hosp_delta,
+            delta_color="normal",
             help="参与当日报表的医院数量"
         )
         st.markdown('</div>', unsafe_allow_html=True)
@@ -500,9 +482,8 @@ with tab1:
     if not df_date.empty:
         st.divider()
         st.markdown("### 🏥 当日医院明细")
-        df_rich = df_date[['医院', '订单数', '金额', '客单价']].sort_values('订单数', ascending=False).reset_index(drop=True).copy()
+        df_rich = df_date[['医院', '订单数', '金额', '客单价']].round(2)
         df_rich['订单数'] = df_rich['订单数'].astype(int)
-        # 金额和客单价已统一为元，无需转换
         
         # 创建表格样式
         def color_row(row):
@@ -512,9 +493,7 @@ with tab1:
         st.dataframe(
             df_rich.style.apply(color_row, axis=1).format({
                 '金额': '¥{:,}',
-                '客单价': '¥{:.2f}',
-                '金额': '¥{:,.0f}',
-                '订单数': '{:,.0f}'
+                '客单价': '¥{:.2f}'
             }),
             use_container_width=True,
             hide_index=True,
@@ -532,20 +511,16 @@ with tab2:
         date_range = pd.date_range(end=selected_dt, periods=7, freq='D')
         date_strings = [d.strftime('%Y-%m-%d') for d in date_range]
         
-        # 按日期聚合数据（排除"数据待补充"的汇总数据，避免重复计算）
-        df_detail_only = df_filtered[df_filtered['医院'] != '数据待补充']
-        df_temp = df_detail_only[df_detail_only['日期'].isin(date_strings)]
-        
-        # 各医院趋势（明细数据）
+        # 按日期聚合数据
+        df_temp = df_filtered[df_filtered['日期'].isin(date_strings)]
         daily_trends = df_temp.groupby(['日期', '医院']).agg({
             '订单数': 'sum',
             '金额': 'sum',
             '客单价': 'mean'
         }).reset_index()
         
-        # 按日期聚合总量（含汇总补充数据）
-        df_temp_all = df_filtered[df_filtered['日期'].isin(date_strings)]
-        daily_totals = df_temp_all.groupby('日期').agg({
+        # 按日期进一步聚合（不分医院，用于总量趋势）
+        daily_totals = df_temp.groupby('日期').agg({
             '订单数': 'sum',
             '金额': 'sum',
             '客单价': 'mean'
@@ -587,7 +562,7 @@ with tab2:
                     template='plotly_white',
                     height=350,
                     xaxis_title='日期',
-                    yaxis_title='金额 (万元)',
+                    yaxis_title='金额 (元)',
                     hovermode='x unified'
                 )
                 st.plotly_chart(fig_revenue, use_container_width=True)
@@ -596,16 +571,17 @@ with tab2:
             st.markdown("### 🏥 各医院详细趋势")
             
             if not daily_trends.empty:
-                # 按总订单数取 TOP 15 医院，避免图表混乱
+                # 只显示 TOP 15 医院（避免线条过多重叠）
                 top_hospitals = daily_trends.groupby('医院')['订单数'].sum().nlargest(15).index.tolist()
-                df_top = daily_trends[daily_trends['医院'].isin(top_hospitals)]
+                daily_top = daily_trends[daily_trends['医院'].isin(top_hospitals)]
                 
+                # 分医院的趋势图
                 fig_detail = px.line(
-                    df_top,
+                    daily_top,
                     x='日期',
                     y='订单数',
                     color='医院',
-                    title='各医院订单数趋势对比 (TOP 15)',
+                    title='各医院订单数趋势对比（TOP 15）',
                     markers=True,
                     line_shape='spline',
                     color_discrete_sequence=px.colors.qualitative.Set3
@@ -621,11 +597,11 @@ with tab2:
                 
                 # 各医院营收趋势
                 fig_revenue_compare = px.line(
-                    df_top,
+                    daily_top,
                     x='日期',
                     y='金额',
                     color='医院',
-                    title='各医院营业额趋势对比 (TOP 15)',
+                    title='各医院营业额趋势对比（TOP 15）',
                     markers=True,
                     line_shape='spline',
                     color_discrete_sequence=px.colors.qualitative.Set3
@@ -634,7 +610,7 @@ with tab2:
                     template='plotly_white',
                     height=400,
                     xaxis_title='日期',
-                    yaxis_title='金额 (万元)',
+                    yaxis_title='金额 (元)',
                     hovermode='x unified'
                 )
                 st.plotly_chart(fig_revenue_compare, use_container_width=True)
@@ -654,83 +630,88 @@ with tab3:
         
         with st.spinner("🤖 正在执行异常检测分析..."):
             for idx, hospital in enumerate(all_hospitals):
-                # 获取近 7 天数据（检测所有日期，而非仅选中日期）
+                # 获取近 7 天数据
                 hosp_data = df_hospital[df_hospital['医院'] == hospital].sort_values('日期', ascending=False).head(7)
                 if len(hosp_data) < 2:
                     continue
                 
                 # 按日期聚合
                 daily = hosp_data.groupby('日期').agg({'订单数': 'sum', '金额': 'sum'}).reset_index()
-                if len(daily) < 3:  # 至少需要3天才能检测异常
+                if len(daily) < 2:
                     continue
                 
-                # 对每一天进行检测（而非仅检测选中日期）
-                for _, today_row in daily.iterrows():
-                    check_date = today_row['日期']
-                    today_orders = int(today_row['订单数'])
-                    today_amount = float(today_row['金额'])
-                    
-                    # 计算统计指标（排除当天数据）
-                    other_days = daily[daily['日期'] != check_date]['订单数']
-                    if len(other_days) < 2:
-                        continue
-                    
-                    mean_orders = other_days.mean()
-                    median_orders = other_days.median()
-                    std_orders = other_days.std()
-                    
-                    q1_orders = other_days.quantile(0.25)
-                    q3_orders = other_days.quantile(0.75)
-                    iqr_orders = q3_orders - q1_orders
-                    upper_bound = q3_orders + 2.5 * iqr_orders
-                    
-                    dynamic_threshold = max(median_orders * 2.0, mean_orders + 3 * std_orders)
-                    dynamic_threshold = max(dynamic_threshold, 50)
-                    
-                    # 多算法检测
-                    anomaly_flags = []
-                    if std_orders and std_orders > 0:
-                        zscore = (today_orders - mean_orders) / std_orders
-                        if abs(zscore) > 3.0:
-                            anomaly_flags.append(f'🔴 Z-Score={zscore:.2f}')
-                    
-                    if today_orders > upper_bound:
-                        anomaly_flags.append(f'🟠 IQR>{upper_bound:.0f}')
-                    
-                    if today_orders >= 20 and today_orders > dynamic_threshold:
-                        anomaly_flags.append(f'🟢 动态>{dynamic_threshold:.0f}')
-                    
-                    # 环比增长检测
-                    prev_day_data = daily[daily['日期'] < check_date].sort_values('日期', ascending=False)
-                    if not prev_day_data.empty and prev_day_data.iloc[0]['订单数'] >= 10:
-                        prev_orders = prev_day_data.iloc[0]['订单数']
-                        if prev_orders > 0:
-                            growth_rate = (today_orders - prev_orders) / prev_orders * 100
-                            if growth_rate > 200:
-                                anomaly_flags.append(f'🔵 环比+{growth_rate:.0f}%')
-                    
-                    # 至少2个检测器确认才标记异常
-                    if len(anomaly_flags) >= 2:
-                        anomalies.append({
-                            '医院': hospital,
-                            '日期': check_date,
-                            '订单数': today_orders,
-                            '金额': today_amount,
-                            '异常类型': anomaly_flags,
-                            '均值': float(mean_orders),
-                            '标准差': float(std_orders),
-                            'IQR上限': float(upper_bound),
+                # 获取今日数据
+                today = daily[daily['日期'] == selected_date_str]
+                if today.empty:
+                    continue
+                
+                today_orders = int(today.iloc[0]['订单数'])
+                today_amount = float(today.iloc[0]['金额'])
+                
+                # 计算统计指标（排除今日数据）
+                other_days = daily[daily['日期'] != selected_date_str]['订单数']
+                
+                if len(other_days) < 2:
+                    continue
+                
+                mean_orders = other_days.mean()
+                median_orders = other_days.median()
+                std_orders = other_days.std()
+                
+                q1_orders = other_days.quantile(0.25)
+                q3_orders = other_days.quantile(0.75)
+                iqr_orders = q3_orders - q1_orders
+                upper_bound = q3_orders + 2.5 * iqr_orders  # 更宽松的IQR
+                
+                # 动态阈值（更宽松）
+                dynamic_threshold = max(
+                    median_orders * 2.0,
+                    mean_orders + 3 * std_orders
+                )
+                dynamic_threshold = max(dynamic_threshold, 50)
+                
+                # 多算法检测逻辑
+                anomaly_flags = []
+                # 检查每个算法的触发条件
+                if std_orders and std_orders > 0:
+                    zscore = (today_orders - mean_orders) / std_orders
+                    if abs(zscore) > 3.0:  # 3σ 规则
+                        anomaly_flags.append(f'🔴 Z-Score={zscore:.2f}')
+                
+                if today_orders > upper_bound:
+                    anomaly_flags.append(f'🟠 IQR>{upper_bound:.0f}')
+                
+                if today_orders >= 20 and today_orders > dynamic_threshold:
+                    anomaly_flags.append(f'🟢 动态>{dynamic_threshold:.0f}')
+                
+                # 环比增长检测
+                prev_day_data = daily[daily['日期'] < selected_date_str].sort_values('日期', ascending=False)
+                if not prev_day_data.empty and prev_day_data.iloc[0]['订单数'] >= 10:
+                    prev_orders = prev_day_data.iloc[0]['订单数']
+                    if prev_orders > 0:
+                        growth_rate = (today_orders - prev_orders) / prev_orders * 100
+                        if growth_rate > 200:
+                            anomaly_flags.append(f'🔵 环比+{growth_rate:.0f}%')
+                
+                # 所有算法都检测到异常才标记
+                if len(anomaly_flags) >= 2 and len([f for f in anomaly_flags if 'IQR' not in f or len(anomaly_flags) > 1]):  # 至少2个检测器确认
+                    anomalies.append({
+                        '医院': hospital,
+                        '日期': selected_date_str,
+                        '订单数': today_orders,
+                        '金额': today_amount,
+                        '异常类型': anomaly_flags,
+                        '均值': float(mean_orders),
+                        '标准差': float(std_orders),
+                        'IQR上限': float(upper_bound),
                         '动态阈值': float(dynamic_threshold),
                         '检测算法数': len(anomaly_flags)
                     })
         
-        # 按选中日期过滤异常数据
-        anomalies_filtered = [a for a in anomalies if a['日期'] == selected_date_str]
-        
         # 显示异常结果
-        if anomalies_filtered:
-            st.error(f"🚨 **{selected_date_str}** 发现 **{len(anomalies_filtered)}** 个医院存在显著异常波动！")
-            for i, a in enumerate(anomalies_filtered):
+        if anomalies:
+            st.error(f"🚨 发现 **{len(anomalies)}** 个医院存在显著异常波动！")
+            for i, a in enumerate(anomalies):
                 anomaly_types = " | ".join(a['异常类型'])
                 expander_title = f"🏥 异常医院：{a['医院']} | 📦 {a['订单数']:,} 单 | 💰 ¥{a['金额']:,.0f} | 🔍 {a['检测算法数']}种预警"
                 
@@ -777,7 +758,7 @@ with tab3:
                         )
                         st.plotly_chart(fig, use_container_width=True)
         else:
-            st.success(f"✅ **{selected_date_str}** 所有 {len(all_hospitals)} 家医院数据正常，未检测到异常波动")
+            st.success(f"✅ 所有 {len(all_hospitals)} 家医院数据正常，未检测到批量异常波动！系统运行稳定")
     else:
         st.warning("⚠️ 暂无有效数据可供异常检测分析")
 
@@ -791,39 +772,57 @@ with tab4:
         with tab4_sub1:
             df_top_revenue = df_date.sort_values('金额', ascending=False).head(10)
             if not df_top_revenue.empty:
-                st.dataframe(
-                    df_top_revenue[['医院', '订单数', '金额', '客单价']].rename(
-                        columns={'医院':'医院', '订单数':'订单数', '金额':'金额(元)', '客单价':'客单价(元)'}
-                    ).reset_index(drop=True),
-                    use_container_width=True,
-                    hide_index=True
+                fig_rev = px.bar(
+                    df_top_revenue,
+                    x='金额',
+                    y='医院',
+                    orientation='h',
+                    title='营业额排行榜 (TOP 10)',
+                    color='金额',
+                    color_continuous_scale='viridis',
+                    text='金额'
                 )
+                fig_rev.update_traces(texttemplate='¥%{text:,.0f}', textposition='auto')
+                fig_rev.update_layout(height=500)
+                st.plotly_chart(fig_rev, use_container_width=True)
             else:
                 st.info("🔍 当日无营业额排名数据")
         
         with tab4_sub2:
             df_top_orders = df_date.sort_values('订单数', ascending=False).head(10)
             if not df_top_orders.empty:
-                st.dataframe(
-                    df_top_orders[['医院', '订单数', '金额', '客单价']].rename(
-                        columns={'医院':'医院', '订单数':'订单数', '金额':'金额(元)', '客单价':'客单价(元)'}
-                    ).reset_index(drop=True),
-                    use_container_width=True,
-                    hide_index=True
+                fig_ord = px.bar(
+                    df_top_orders,
+                    x='订单数',
+                    y='医院',
+                    orientation='h',
+                    title='订单量排行榜 (TOP 10)',
+                    color='订单数',
+                    color_continuous_scale='Blues',
+                    text='订单数'
                 )
+                fig_ord.update_traces(texttemplate='%{text:,}', textposition='auto')
+                fig_ord.update_layout(height=500)
+                st.plotly_chart(fig_ord, use_container_width=True)
             else:
                 st.info("🔍 当日无订单量排名数据")
         
         with tab4_sub3:
             df_top_price = df_date.sort_values('客单价', ascending=False).head(10)
             if not df_top_price.empty:
-                st.dataframe(
-                    df_top_price[['医院', '订单数', '金额', '客单价']].rename(
-                        columns={'医院':'医院', '订单数':'订单数', '金额':'金额(元)', '客单价':'客单价(元)'}
-                    ).reset_index(drop=True),
-                    use_container_width=True,
-                    hide_index=True
+                fig_avg = px.bar(
+                    df_top_price,
+                    x='客单价',
+                    y='医院',
+                    orientation='h',
+                    title='客单价排行榜 (TOP 10)',
+                    color='客单价',
+                    color_continuous_scale='Oranges',
+                    text='客单价'
                 )
+                fig_avg.update_traces(texttemplate='¥%{text:.2f}', textposition='auto')
+                fig_avg.update_layout(height=500)
+                st.plotly_chart(fig_avg, use_container_width=True)
             else:
                 st.info("🔍 当日无客单价排名数据")
     else:
@@ -1053,6 +1052,421 @@ with tab6:
     except Exception as e:
         st.error(f"❌ 环比数据分析加载失败：{e}")
         st.info("🔍 系统提示：可能未找到 duizhang_summary_2025 和 duizhang_summary_2026 表，或该数据表格式不正确")
+
+# ========== TAB 7: 便捷配药数据统计 ==========
+with tab7:
+    st.markdown('<div style="text-align:center;font-size:22px;font-weight:bold;padding:10px 0;background:#2196F3;color:white;">💊 便捷配药数据统计</div>', unsafe_allow_html=True)
+    st.markdown('')
+
+    EXCEL_CP_PATH = '/mnt/c/Users/44238/Desktop/业务对账数据/对账业务总表/新流水2026.xlsx'
+
+    @st.cache_data(ttl=300)
+    def load_convenient_pharmacy():
+        df = pd.read_excel(EXCEL_CP_PATH, header=None, skiprows=4)
+        data = []
+        for _, row in df.iterrows():
+            date_val = row.iloc[0]
+            flow_val = row.iloc[3]
+            order_val = row.iloc[4]
+            if pd.notna(date_val) and pd.notna(flow_val):
+                try:
+                    dt = pd.to_datetime(date_val)
+                    if dt.year != 2026: continue
+                    data.append({'日期': dt.strftime('%Y-%m-%d'), '流水': float(flow_val), '订单': int(order_val) if pd.notna(order_val) else 0})
+                except: pass
+        df = pd.DataFrame(data)
+        if not df.empty: df['日期'] = pd.to_datetime(df['日期'])
+        return df
+
+    @st.cache_data(ttl=300)
+    def load_new_hospitals():
+        conn = sqlite3.connect(DB_PATH)
+        hospitals = {'齐鲁德医': '齐鲁德医', '齐鲁二院': '齐鲁第二医院', '安徽省立': '安徽省立医院', '青岛中心': '青岛中心'}
+        tables_2026 = ['daily_flow_2026_jan_feb', 'daily_flow_2026_mar', 'daily_flow_2026_apr']
+        all_data = {}
+        for name, pattern in hospitals.items():
+            parts = []
+            for t in tables_2026:
+                parts.append(f"SELECT SUBSTR(yewu_wancheng_shijian,1,10) as date, 1 as cnt, amount as amt FROM {t} WHERE institution LIKE '%{pattern}%' AND ye_wu_lei_mu LIKE '%处方服务%' AND pay_status='收费' AND yewu_wancheng_shijian IS NOT NULL AND amount IS NOT NULL")
+            inner = ' UNION ALL '.join(parts)
+            full_query = f'SELECT date, SUM(cnt) as orders, SUM(amt) as flow FROM ({inner}) GROUP BY date ORDER BY date'
+            df_h = pd.read_sql_query(full_query, conn)
+            if not df_h.empty:
+                df_h['date'] = pd.to_datetime(df_h['date'])
+                all_data[name] = df_h
+        conn.close()
+        return all_data
+
+    try:
+        df_cp = load_convenient_pharmacy()
+        hosp_data = load_new_hospitals()
+
+        if df_cp.empty:
+            st.warning("⚠️ 暂无数据")
+        else:
+            col_left, col_right = st.columns([1, 1])
+
+            # ==================== 左栏 ====================
+            with col_left:
+                total_flow_all = df_cp['流水'].sum()
+                total_orders_all = df_cp['订单'].sum()
+                df_recent = df_cp.tail(15).copy()
+                tf_r = df_recent['流水'].sum()
+                to_r = df_recent['订单'].sum()
+
+                st.markdown(f'''<div style="text-align:center;font-size:15px;font-weight:bold;margin-bottom:6px;">2026年便捷购药统计（总）</div>
+<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;">
+<tr><td style="padding:5px 10px;border:1px solid #ccc;font-weight:bold;text-align:right;background:#f5f5f5;width:32%;">总流水（元）：</td>
+<td style="padding:5px 10px;border:1px solid #ccc;font-weight:bold;text-align:center;width:18%;">{total_flow_all:,.0f}</td>
+<td style="padding:5px 10px;border:1px solid #ccc;font-weight:bold;text-align:right;background:#f5f5f5;width:32%;">总订单（单）：</td>
+<td style="padding:5px 10px;border:1px solid #ccc;font-weight:bold;text-align:center;width:18%;">{total_orders_all:,}</td></tr></table>''', unsafe_allow_html=True)
+
+                fig_cp = go.Figure()
+                fig_cp.add_trace(go.Scatter(x=df_recent['日期'], y=df_recent['流水'], name='金额', mode='lines+markers', line=dict(color='#4285F4', width=2.5), marker=dict(size=4)))
+                fig_cp.add_trace(go.Scatter(x=df_recent['日期'], y=df_recent['订单'], name='订单', mode='lines+markers', line=dict(color='#FF9800', width=2.5), marker=dict(size=4), yaxis='y2'))
+                df_recent['日期显示'] = df_recent['日期'].dt.strftime('%-m月%-d日')
+                fig_cp.update_layout(template='plotly_white', height=320,
+                    xaxis=dict(title=None, tickvals=df_recent['日期'], ticktext=df_recent['日期显示'], tickangle=45, tickfont=dict(size=8)),
+                    yaxis=dict(title=None, tickprefix='¥', tickformat=',.0f', side='left'),
+                    yaxis2=dict(title=None, side='right', overlaying='y', showgrid=False, tickformat=',.0f'),
+                    hovermode='x unified', legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0, font=dict(size=9)), margin=dict(l=50, r=50, t=5, b=55))
+                st.plotly_chart(fig_cp, use_container_width=True)
+
+                # 底部表格
+                dr = df_recent['日期'].dt.strftime('%m月%d日').tolist()
+                fl = [f"{v:,.0f}" for v in df_recent['流水'].tolist()]
+                ol = [f"{int(v):,}" for v in df_recent['订单'].tolist()]
+                dr.append('总计'); fl.append(f"{tf_r:,.0f}"); ol.append(f"{to_r:,}")
+                hc = '<th style="padding:2px 3px;border:1px solid #ccc;background:#f0f0f0;font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">日期</th>'
+                for d in dr[:-1]: hc += f'<th style="padding:2px 3px;border:1px solid #ccc;background:#f0f0f0;text-align:center;font-size:8px;white-space:nowrap;">{d}</th>'
+                hc += '<th style="padding:2px 3px;border:1px solid #ccc;background:#d4edda;font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">总计</th>'
+                ac = '<td style="padding:2px 3px;border:1px solid #ccc;background:#e8f0fe;font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">金额</td>'
+                for v in fl[:-1]: ac += f'<td style="padding:2px 3px;border:1px solid #ccc;text-align:right;font-size:8px;white-space:nowrap;">{v}</td>'
+                ac += f'<td style="padding:2px 3px;border:1px solid #ccc;background:#d4edda;font-weight:bold;text-align:right;font-size:8px;white-space:nowrap;">{fl[-1]}</td>'
+                oc = '<td style="padding:2px 3px;border:1px solid #ccc;background:#fff3e0;font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">订单</td>'
+                for v in ol[:-1]: oc += f'<td style="padding:2px 3px;border:1px solid #ccc;text-align:right;font-size:8px;white-space:nowrap;">{v}</td>'
+                oc += f'<td style="padding:2px 3px;border:1px solid #ccc;background:#d4edda;font-weight:bold;text-align:right;font-size:8px;white-space:nowrap;">{ol[-1]}</td>'
+                n_cols = len(dr)
+                colgroup = f'<col style="width:80px;">' + f'<col>' * n_cols
+                st.markdown(f'<div style="width:100%;"><table style="border-collapse:collapse;font-family:monospace;width:100%;table-layout:fixed;"><colgroup>{colgroup}</colgroup><thead><tr>{hc}</tr></thead><tbody><tr>{ac}</tr><tr>{oc}</tr></tbody></table></div>', unsafe_allow_html=True)
+
+            # ==================== 右栏 ====================
+            with col_right:
+                if hosp_data:
+                    all_dates = set()
+                    for df_h in hosp_data.values(): all_dates.update(df_h['date'].tolist())
+                    all_dates_sorted = sorted(all_dates)
+                    recent_dates = all_dates_sorted[-15:] if len(all_dates_sorted) > 15 else all_dates_sorted
+
+                    df_hr = pd.DataFrame({'date': recent_dates})
+                    hosp_names = list(hosp_data.keys())
+                    for name in hosp_names:
+                        df_hf = hosp_data[name][hosp_data[name]['date'].isin(recent_dates)][['date', 'orders', 'flow']].copy()
+                        df_hf = df_hf.rename(columns={'orders': f'{name}_订单', 'flow': f'{name}_流水'})
+                        df_hr = df_hr.merge(df_hf, on='date', how='left')
+                        df_hr[f'{name}_订单'] = df_hr[f'{name}_订单'].fillna(0).astype(int)
+                        df_hr[f'{name}_流水'] = df_hr[f'{name}_流水'].fillna(0)
+                    df_hr = df_hr.sort_values('date').reset_index(drop=True)
+                    df_hr['总流水'] = sum(df_hr[f'{name}_流水'] for name in hosp_names)
+                    df_hr['总订单'] = sum(df_hr[f'{name}_订单'] for name in hosp_names)
+
+                    total_fh = sum(df_h['flow'].sum() for df_h in hosp_data.values())
+                    total_oh = sum(df_h['orders'].sum() for df_h in hosp_data.values())
+
+                    st.markdown(f'''<div style="text-align:center;font-size:15px;font-weight:bold;margin-bottom:6px;">新增医院便捷配药统计</div>
+<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;">
+<tr><td style="padding:5px 10px;border:1px solid #ccc;font-weight:bold;text-align:right;background:#f5f5f5;width:28%;">总流水：</td>
+<td style="padding:5px 10px;border:1px solid #ccc;font-weight:bold;text-align:center;width:22%;">{total_fh:,.0f}</td>
+<td style="padding:5px 10px;border:1px solid #ccc;font-weight:bold;text-align:right;background:#f5f5f5;width:28%;">总订单：</td>
+<td style="padding:5px 10px;border:1px solid #ccc;font-weight:bold;text-align:center;width:22%;">{total_oh:,}</td></tr></table>''', unsafe_allow_html=True)
+
+                    colors_order = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+                    fig_hr = go.Figure()
+                    idx = 0
+                    for name in hosp_names:
+                        fig_hr.add_trace(go.Scatter(x=df_hr['date'], y=df_hr[f'{name}_流水'], name=f'{name}流水', mode='lines+markers', line=dict(color=colors_order[idx%len(colors_order)], width=2), marker=dict(size=4)))
+                        idx += 1
+                        fig_hr.add_trace(go.Scatter(x=df_hr['date'], y=df_hr[f'{name}_订单'], name=f'{name}订单', mode='lines+markers', line=dict(color=colors_order[idx%len(colors_order)], width=2, dash='dot'), marker=dict(size=4), yaxis='y2'))
+                        idx += 1
+                    fig_hr.add_trace(go.Scatter(x=df_hr['date'], y=df_hr['总流水'], name='总流水', mode='lines+markers', line=dict(color='#000', width=3), marker=dict(size=5, symbol='diamond')))
+                    fig_hr.add_trace(go.Scatter(x=df_hr['date'], y=df_hr['总订单'], name='总订单', mode='lines+markers', line=dict(color='#F00', width=3), marker=dict(size=5, symbol='diamond'), yaxis='y2'))
+                    df_hr['日期显示'] = df_hr['date'].dt.strftime('%-m月%-d日')
+                    fig_hr.update_layout(template='plotly_white', height=320,
+                        xaxis=dict(title=None, tickvals=df_hr['date'], ticktext=df_hr['日期显示'], tickangle=45, tickfont=dict(size=8)),
+                        yaxis=dict(title=None, tickprefix='¥', tickformat=',.0f', side='left'),
+                        yaxis2=dict(title=None, side='right', overlaying='y', showgrid=False, tickformat=',.0f'),
+                        hovermode='x unified', legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0, font=dict(size=7)), margin=dict(l=50, r=50, t=5, b=55))
+                    st.plotly_chart(fig_hr, use_container_width=True)
+
+                    # 底部表格
+                    dr2 = df_hr['date'].dt.strftime('%m月%d日').tolist()
+                    rows = []
+                    for name in hosp_names:
+                        rows.append(('流水', name, [f"{v:,.0f}" for v in df_hr[f'{name}_流水'].tolist()], '#e8f0fe'))
+                        rows.append(('订单', name, [f"{int(v):,}" for v in df_hr[f'{name}_订单'].tolist()], '#fff3e0'))
+                    rows.append(('流水', '总计', [f"{v:,.0f}" for v in df_hr['总流水'].tolist()], '#d4edda'))
+                    rows.append(('订单', '总计', [f"{int(v):,}" for v in df_hr['总订单'].tolist()], '#d4edda'))
+                    # 表头
+                    hc2 = '<th style="padding:2px 3px;border:1px solid #ccc;background:#f0f0f0;font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">日期</th>'
+                    for d in dr2: hc2 += f'<th style="padding:2px 3px;border:1px solid #ccc;background:#f0f0f0;text-align:center;font-size:8px;white-space:nowrap;">{d}</th>'
+                    thead = f'<thead><tr>{hc2}</tr></thead>'
+                    # 表体
+                    tbody = '<tbody>'
+                    for rt, rn, vals, bg in rows:
+                        tr = f'<td style="padding:2px 3px;border:1px solid #ccc;background:{bg};font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">{rn}{rt}</td>'
+                        for v in vals: tr += f'<td style="padding:2px 3px;border:1px solid #ccc;text-align:right;font-size:8px;white-space:nowrap;">{v}</td>'
+                        tbody += f'<tr>{tr}</tr>'
+                    tbody += '</tbody>'
+                    n_cols2 = len(dr2) + 1
+                    colgroup2 = f'<col style="width:80px;">' + f'<col>' * n_cols2
+                    st.markdown(f'<div style="width:100%;"><table style="border-collapse:collapse;font-family:monospace;width:100%;table-layout:fixed;"><colgroup>{colgroup2}</colgroup>{thead}{tbody}</table></div>', unsafe_allow_html=True)
+                else:
+                    st.info("🔍 暂无新增医院数据")
+
+    except Exception as e:
+        st.error(f"❌ 便捷配药数据加载失败：{e}")
+
+# ========== 便捷配药 - 机构趋势图 ==========
+    st.markdown('---')
+    st.markdown('<div style="text-align:center;font-size:18px;font-weight:bold;padding:8px 0;background:#2196F3;color:white;">常规机构便捷配药数据趋势图</div>', unsafe_allow_html=True)
+    st.markdown('')
+    
+    try:
+        # 重新连接数据库
+        conn2 = sqlite3.connect(DB_PATH)
+        cursor2 = conn2.cursor()
+        
+        # 医院配置
+        HOSPITALS = [
+            {'title': '浙江省中医院便捷配药订单统计', 'name': '浙江省中医院（湖滨院区）', 'type': 'single'},
+            {'title': '杭州师范大学附属医院便捷配药统计', 'name': '杭州师范大学附属医院', 'type': 'dual'},
+            {'title': '青岛市中医院便捷配药统计', 'name': '青岛中心医院', 'type': 'dual'},
+            {'title': '宁夏医科大学总医院便捷配药订单统计', 'name': '宁夏医科大学总医院', 'type': 'single'}
+        ]
+        
+        # 获取数据（查询 2026 年所有月份）
+        data_list = []
+        tables_2026 = ['daily_flow_2026_jan_feb', 'daily_flow_2026_mar', 'daily_flow_2026_apr']
+        
+        for config in HOSPITALS:
+            # UNION ALL 联合所有 2026 年表
+            queries = []
+            for t in tables_2026:
+                queries.append(f"SELECT SUBSTR(yewu_wancheng_shijian,1,10) as date, COUNT(*) as orders, SUM(amount) as flow FROM {t} WHERE institution LIKE '%{config['name']}%' AND pay_status='收费' AND yewu_wancheng_shijian IS NOT NULL AND amount IS NOT NULL GROUP BY SUBSTR(yewu_wancheng_shijian,1,10)")
+            
+            full_query = ' UNION ALL '.join(queries)
+            inner = f'SELECT date, SUM(orders) as orders, SUM(flow) as flow FROM ({full_query}) GROUP BY date ORDER BY date'
+            cursor2.execute(inner)
+            rows = cursor2.fetchall()
+            df = pd.DataFrame(rows, columns=['date', 'orders', 'flow'])
+            df = df[df['date'].notna()]
+            df['date'] = pd.to_datetime(df['date'])
+            
+            if len(df) > 0:
+                config['data'] = df
+                config['total_orders'] = int(df['orders'].sum())
+                config['total_flow'] = float(df['flow'].sum())
+                data_list.append(config)
+        
+        if not data_list:
+            st.info("🔍 暂无数据")
+        else:
+            # 2x2 布局
+            row1_col1, row1_col2 = st.columns(2)
+            row2_col1, row2_col2 = st.columns(2)
+            cols = [row1_col1, row1_col2, row2_col1, row2_col2]
+            
+            for idx, config in enumerate(data_list):
+                df = config['data']
+                title = config['title']
+                
+                # 汇总卡片用累计数据（2026 年至今）
+                total_orders_all = config['total_orders']
+                total_flow_all = config['total_flow']
+                
+                # 图表和表格用近 15 天数据
+                df_recent = df.tail(15).copy()
+                
+                with cols[idx]:
+                    # 标题
+                    st.markdown(f'''<div style="text-align:center;font-size:14px;font-weight:bold;margin-bottom:6px;">{title}</div>''', unsafe_allow_html=True)
+                    
+                    # 汇总卡片（2026年累计数据）
+                    if config['type'] == 'single':
+                        st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:6px;">
+<tr><td style="padding:4px 8px;border:1px solid #ccc;font-weight:bold;text-align:right;background:#f5f5f5;width:40%;">订单总数（单）：</td>
+<td style="padding:4px 8px;border:1px solid #ccc;font-weight:bold;text-align:center;width:60%;">{total_orders_all:,}</td></tr></table>''', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:6px;">
+<tr><td style="padding:4px 8px;border:1px solid #ccc;font-weight:bold;text-align:right;background:#f5f5f5;width:28%;">总流水（元）：</td>
+<td style="padding:4px 8px;border:1px solid #ccc;font-weight:bold;text-align:center;width:22%;">{total_flow_all:,.0f}</td>
+<td style="padding:4px 8px;border:1px solid #ccc;font-weight:bold;text-align:right;background:#f5f5f5;width:28%;">总订单（单）：</td>
+<td style="padding:4px 8px;border:1px solid #ccc;font-weight:bold;text-align:center;width:22%;">{total_orders_all:,}</td></tr></table>''', unsafe_allow_html=True)
+                    
+                    # 图表（近15天数据）
+                    if config['type'] == 'single':
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=df_recent['date'], y=df_recent['orders'], name='订单', mode='lines+markers', line=dict(color='#FF9800', width=2), marker=dict(size=4)))
+                        df_recent['日期显示'] = df_recent['date'].dt.strftime('%-m月%-d日')
+                        fig.update_layout(template='plotly_white', height=280,
+                            xaxis=dict(title=None, tickvals=df_recent['date'], ticktext=df_recent['日期显示'], tickangle=45, tickfont=dict(size=8)),
+                            yaxis=dict(title=None, tickformat=',.0f', side='left'),
+                            hovermode='x unified', legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0, font=dict(size=8)), margin=dict(l=50, r=30, t=5, b=45))
+                    else:
+                        fig = make_subplots(specs=[[{"secondary_y": True}]])
+                        fig.add_trace(go.Scatter(x=df_recent['date'], y=df_recent['flow'], name='流水', mode='lines+markers', line=dict(color='#4285F4', width=2), marker=dict(size=4)), secondary_y=False)
+                        fig.add_trace(go.Scatter(x=df_recent['date'], y=df_recent['orders'], name='订单', mode='lines+markers', line=dict(color='#FF9800', width=2), marker=dict(size=4)), secondary_y=True)
+                        df_recent['日期显示'] = df_recent['date'].dt.strftime('%-m月%-d日')
+                        fig.update_layout(template='plotly_white', height=280,
+                            xaxis=dict(title=None, tickvals=df_recent['date'], ticktext=df_recent['日期显示'], tickangle=45, tickfont=dict(size=8)),
+                            yaxis=dict(title=None, tickprefix='¥', tickformat=',.0f', side='left'),
+                            yaxis2=dict(title=None, side='right', overlaying='y', showgrid=False, tickformat=',.0f'),
+                            hovermode='x unified', legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0, font=dict(size=8)), margin=dict(l=50, r=50, t=5, b=45))
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # 底部表格（近15天数据，HTML 转置透视表）
+                    date_list = df_recent['date'].dt.strftime('%m月%d日').tolist()
+                    rows_table = []
+                    if config['type'] == 'dual':
+                        rows_table.append(('流水', '金额', [f"{v:,.0f}" for v in df_recent['flow'].tolist()], '#e8f0fe'))
+                        rows_table.append(('订单', '数量', [f"{int(v):,}" for v in df_recent['orders'].tolist()], '#fff3e0'))
+                    else:
+                        rows_table.append(('订单', '数量', [f"{int(v):,}" for v in df_recent['orders'].tolist()], '#fff3e0'))
+                    
+                    total_flow_recent = df_recent['flow'].sum()
+                    total_orders_recent = int(df_recent['orders'].sum())
+                    if config['type'] == 'dual':
+                        rows_table.append(('流水', '总计', [f"{total_flow_recent:,.0f}"], '#d4edda'))
+                    rows_table.append(('订单', '总计', [f"{total_orders_recent:,}"], '#d4edda'))
+                    
+                    th_cells = '<th style="padding:2px 3px;border:1px solid #ccc;background:#f0f0f0;font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">日期</th>'
+                    for d in date_list:
+                        th_cells += f'<th style="padding:2px 3px;border:1px solid #ccc;background:#f0f0f0;text-align:center;font-size:8px;white-space:nowrap;">{d}</th>'
+                    thead = f'<thead><tr>{th_cells}</tr></thead>'
+                    
+                    tbody = '<tbody>'
+                    for rt, rn, vals, bg in rows_table:
+                        tr = f'<td style="padding:2px 3px;border:1px solid #ccc;background:{bg};font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">{rn}{rt}</td>'
+                        for v in vals:
+                            tr += f'<td style="padding:2px 3px;border:1px solid #ccc;text-align:right;font-size:8px;white-space:nowrap;">{v}</td>'
+                        tbody += f'<tr>{tr}</tr>'
+                    tbody += '</tbody>'
+                    
+                    n_cols = len(date_list) + 1
+                    colgroup = f'<col style="width:70px;">' + f'<col>' * n_cols
+                    st.markdown(f'<div style="width:100%;"><table style="border-collapse:collapse;font-family:monospace;width:100%;table-layout:fixed;"><colgroup>{colgroup}</colgroup>{thead}{tbody}</table></div>', unsafe_allow_html=True)
+        
+        conn2.close()
+    
+    except Exception as e:
+        st.error(f"❌ 机构趋势图加载失败：{e}")
+
+# ========== 便捷配药 - 新增机构趋势图 ==========
+    st.markdown('---')
+    st.markdown('<div style="text-align:center;font-size:18px;font-weight:bold;padding:8px 0;background:#2196F3;color:white;">新增机构便捷配药数据趋势图</div>', unsafe_allow_html=True)
+    st.markdown('')
+    
+    try:
+        # 重新连接数据库
+        conn3 = sqlite3.connect(DB_PATH)
+        cursor3 = conn3.cursor()
+        
+        # 新增医院配置（4 家便捷配药医院）
+        NEW_HOSPITALS = [
+            {'title': '齐鲁德医便捷配药订单统计', 'name': '齐鲁德医', 'total': 71061},
+            {'title': '齐鲁第二医院便捷配药订单统计', 'name': '齐鲁第二医院', 'total': 4645},
+            {'title': '安徽省立医院便捷配药订单统计', 'name': '安徽省立医院', 'total': 7089},
+            {'title': '青岛中心医院便捷配药订单统计', 'name': '青岛中心', 'total': 115}
+        ]
+        
+        tables_2026 = ['daily_flow_2026_jan_feb', 'daily_flow_2026_mar', 'daily_flow_2026_apr']
+        
+        # 获取数据
+        data_list = []
+        for config in NEW_HOSPITALS:
+            queries = []
+            for t in tables_2026:
+                queries.append(f"SELECT SUBSTR(yewu_wancheng_shijian,1,10) as date, COUNT(*) as orders FROM {t} WHERE institution LIKE '%{config['name']}%' AND pay_status='收费' AND yewu_wancheng_shijian IS NOT NULL AND amount IS NOT NULL GROUP BY SUBSTR(yewu_wancheng_shijian,1,10)")
+            
+            full_query = ' UNION ALL '.join(queries)
+            inner = f'SELECT date, SUM(orders) as orders FROM ({full_query}) GROUP BY date ORDER BY date'
+            cursor3.execute(inner)
+            rows = cursor3.fetchall()
+            df = pd.DataFrame(rows, columns=['date', 'orders'])
+            df = df[df['date'].notna()]
+            df['date'] = pd.to_datetime(df['date'])
+            
+            if len(df) > 0:
+                config['data'] = df
+                config['total_orders'] = int(df['orders'].sum())
+                data_list.append(config)
+        
+        if not data_list:
+            st.info("🔍 暂无数据")
+        else:
+            # 2x2 布局
+            row1_col1, row1_col2 = st.columns(2)
+            row2_col1, row2_col2 = st.columns(2)
+            cols = [row1_col1, row1_col2, row2_col1, row2_col2]
+            
+            for idx, config in enumerate(data_list):
+                df = config['data']
+                title = config['title']
+                
+                # 汇总数据（2026年累计）
+                total_orders_all = config['total_orders']
+                
+                # 图表数据（近15天）
+                df_recent = df.tail(15).copy()
+                
+                with cols[idx]:
+                    # 标题
+                    st.markdown(f'''<div style="text-align:center;font-size:14px;font-weight:bold;margin-bottom:6px;">{title}</div>''', unsafe_allow_html=True)
+                    
+                    # 汇总卡片（HTML 表格）
+                    st.markdown(f'''<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:6px;">
+<tr><td style="padding:4px 8px;border:1px solid #ccc;font-weight:bold;text-align:right;background:#f5f5f5;width:40%;">订单总数（单）：</td>
+<td style="padding:4px 8px;border:1px solid #ccc;font-weight:bold;text-align:center;width:60%;">{total_orders_all:,}</td></tr></table>''', unsafe_allow_html=True)
+                    
+                    # 图表（单折线，和上面样式一致）
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=df_recent['date'], y=df_recent['orders'], name='订单', mode='lines+markers', line=dict(color='#FF9800', width=2), marker=dict(size=4)))
+                    df_recent['日期显示'] = df_recent['date'].dt.strftime('%-m月%-d日')
+                    fig.update_layout(template='plotly_white', height=280,
+                        xaxis=dict(title=None, tickvals=df_recent['date'], ticktext=df_recent['日期显示'], tickangle=45, tickfont=dict(size=8)),
+                        yaxis=dict(title=None, tickformat=',.0f', side='left'),
+                        hovermode='x unified', legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0, font=dict(size=8)), margin=dict(l=50, r=30, t=5, b=45))
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # 底部表格（近15天，HTML 转置透视表）
+                    date_list = df_recent['date'].dt.strftime('%m月%d日').tolist()
+                    rows_table = [('订单', '数量', [f"{int(v):,}" for v in df_recent['orders'].tolist()], '#fff3e0')]
+                    total_orders_recent = int(df_recent['orders'].sum())
+                    rows_table.append(('订单', '总计', [f"{total_orders_recent:,}"], '#d4edda'))
+                    
+                    th_cells = '<th style="padding:2px 3px;border:1px solid #ccc;background:#f0f0f0;font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">日期</th>'
+                    for d in date_list:
+                        th_cells += f'<th style="padding:2px 3px;border:1px solid #ccc;background:#f0f0f0;text-align:center;font-size:8px;white-space:nowrap;">{d}</th>'
+                    thead = f'<thead><tr>{th_cells}</tr></thead>'
+                    
+                    tbody = '<tbody>'
+                    for rt, rn, vals, bg in rows_table:
+                        tr = f'<td style="padding:2px 3px;border:1px solid #ccc;background:{bg};font-weight:bold;text-align:center;font-size:8px;white-space:nowrap;">{rn}{rt}</td>'
+                        for v in vals:
+                            tr += f'<td style="padding:2px 3px;border:1px solid #ccc;text-align:right;font-size:8px;white-space:nowrap;">{v}</td>'
+                        tbody += f'<tr>{tr}</tr>'
+                    tbody += '</tbody>'
+                    
+                    n_cols = len(date_list) + 1
+                    colgroup = f'<col style="width:70px;">' + f'<col>' * n_cols
+                    st.markdown(f'<div style="width:100%;"><table style="border-collapse:collapse;font-family:monospace;width:100%;table-layout:fixed;"><colgroup>{colgroup}</colgroup>{thead}{tbody}</table></div>', unsafe_allow_html=True)
+        
+        conn3.close()
+    
+    except Exception as e:
+        st.error(f"❌ 新增机构趋势图加载失败：{e}")
 
 # ========== 底部信息 ==========
 st.divider()
