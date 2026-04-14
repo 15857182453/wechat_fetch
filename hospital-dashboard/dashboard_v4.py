@@ -389,14 +389,15 @@ if selected_hospitals:
 df_date = df_filtered[df_filtered['日期'] == selected_date_str]
 
 # ========== 标签页布局 (7 个功能页签) ==========
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📊 **总览分析**", 
     "📈 **趋势洞察**", 
     "⚠️ **异常监控**", 
     "🏆 **医院排行**", 
     "🌍 **区域分布", 
     "📉 **月度环比**",
-    "💊 **便捷配药**"
+    "💊 **便捷配药**",
+    "📋 **运营快报**"
 ])
 
 # ========== TAB 1: 总览分析 ==========
@@ -1468,6 +1469,229 @@ with tab7:
     except Exception as e:
         st.error(f"❌ 新增机构趋势图加载失败：{e}")
 
+# ========== TAB 8: 每日运营快报 ==========
+with tab8:
+    st.markdown('<div class="card fade-in"><h3>📋 每日运营快报</h3></div>', unsafe_allow_html=True)
+
+    try:
+        conn_r = sqlite3.connect(DB_PATH)
+
+        # ===== 获取所有有效数据（过滤异常日期：订单<100视为异常）=====
+        df_all = pd.read_sql_query('''
+            SELECT date(yewu_wancheng_shijian) as date, institution, province,
+                   pay_status, amount, ye_wu_lei_mu
+            FROM daily_flow_2026_apr
+            WHERE yewu_wancheng_shijian IS NOT NULL AND amount IS NOT NULL
+        ''', conn_r)
+        df_all['date'] = pd.to_datetime(df_all['date'])
+        df_all = df_all[df_all['date'].notna()]
+        df_all['amount'] = pd.to_numeric(df_all['amount'], errors='coerce')
+
+        # 按日期统计订单数，过滤异常日期（<100单的视为异常/测试数据）
+        daily_counts = df_all[df_all['pay_status']=='收费'].groupby('date').size()
+        valid_dates = daily_counts[daily_counts >= 100].index
+        df_valid = df_all[df_all['date'].isin(valid_dates)].copy()
+        df_valid = df_valid.sort_values('date')
+
+        # 过滤收费数据
+        df_charge = df_valid[df_valid['pay_status'] == '收费'].copy()
+        df_refund = df_valid[df_valid['pay_status'] == '退费'].copy()
+
+        if len(df_charge) == 0:
+            st.warning("暂无有效数据")
+            conn_r.close()
+            st.stop()
+
+        # 获取最新有效日期
+        latest_date = df_charge['date'].max()
+        all_dates = sorted(df_charge['date'].unique())
+        date_idx = all_dates.index(latest_date)
+        prev_date = all_dates[date_idx - 1] if date_idx > 0 else None
+
+        # ===== 当日数据 =====
+        df_today = df_charge[df_charge['date'] == latest_date]
+        today_flow = df_today['amount'].sum()
+        today_orders = len(df_today)
+        today_avg = today_flow / today_orders if today_orders > 0 else 0
+        active_hospitals = df_today['institution'].nunique()
+
+        # 月累计
+        month_start = latest_date.replace(day=1)
+        df_month = df_charge[df_charge['date'] >= month_start]
+        month_flow = df_month['amount'].sum()
+        month_orders = len(df_month)
+
+        # ===== 整体概览 =====
+        st.markdown("---")
+        weekdays = ['周一','周二','周三','周四','周五','周六','周日']
+        wd = weekdays[latest_date.weekday()]
+        st.markdown(f"📅 **最新数据日期：{latest_date.strftime('%Y-%m-%d')}（{wd}）| 有效日期数：{len(valid_dates)} 天")
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("💰 当日流水", f"¥{today_flow:,.0f} 元")
+        with col2:
+            st.metric("📦 当日订单", f"{today_orders:,} 单")
+        with col3:
+            st.metric("💲 客单价", f"¥{today_avg:,.0f} 元")
+        with col4:
+            st.metric("🏥 活跃医院", f"{active_hospitals} 家")
+
+        st.info(f"📊 **月累计**（{month_start.strftime('%m/01')} - {latest_date.strftime('%m/%d')}）：流水 ¥{month_flow:,.0f} 元 | 订单 {month_orders:,} 单")
+
+        # ===== 环比 =====
+        if prev_date is not None:
+            df_prev = df_charge[df_charge['date'] == prev_date]
+            prev_flow = df_prev['amount'].sum()
+            prev_orders = len(df_prev)
+            flow_chg = ((today_flow - prev_flow) / prev_flow * 100) if prev_flow > 0 else 0
+            orders_chg = ((today_orders - prev_orders) / prev_orders * 100) if prev_orders > 0 else 0
+
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                arrow = "📈" if flow_chg >= 0 else "📉"
+                st.metric(f"💰 环比（{latest_date.strftime('%m/%d')} vs {prev_date.strftime('%m/%d')}）", f"¥{today_flow:,.0f}", f"{flow_chg:+.1f}% {arrow}")
+            with col_c2:
+                arrow = "📈" if orders_chg >= 0 else "📉"
+                st.metric(f"📦 订单环比", f"{today_orders:,} 单", f"{orders_chg:+.1f}% {arrow}")
+
+        # ===== 医院排名 =====
+        st.markdown("---")
+        st.markdown("🏆 **医院排行**")
+
+        hosp_today = df_today.groupby('institution').agg(
+            flow=('amount', 'sum'), orders=('amount', 'count')
+        ).reset_index().sort_values('flow', ascending=False)
+
+        col_left, col_right = st.columns(2)
+        with col_left:
+            st.markdown("📈 **流水 TOP10**")
+            top10 = hosp_today.head(10)
+            fig1 = px.bar(top10, x='flow', y='institution', orientation='h',
+                         color='flow', color_continuous_scale='Blues', height=380)
+            fig1.update_layout(template='plotly_white', showlegend=False,
+                              xaxis_tickformat=',.0f', margin=dict(l=150,r=20,t=10,b=40))
+            st.plotly_chart(fig1, use_container_width=True)
+        with col_right:
+            st.markdown("📦 **订单 TOP10**")
+            top10o = hosp_today.sort_values('orders', ascending=False).head(10)
+            fig2 = px.bar(top10o, x='orders', y='institution', orientation='h',
+                         color='orders', color_continuous_scale='Oranges', height=380)
+            fig2.update_layout(template='plotly_white', showlegend=False,
+                              xaxis_tickformat=',', margin=dict(l=150,r=20,t=10,b=40))
+            st.plotly_chart(fig2, use_container_width=True)
+
+        # 增长/下降 TOP5
+        if prev_date is not None:
+            st.markdown("---")
+            st.markdown(f"📊 **环比变化**（{latest_date.strftime('%m/%d')} vs {prev_date.strftime('%m/%d')}）")
+
+            h_t = df_today.groupby('institution')['amount'].sum().reset_index()
+            h_t.columns = ['institution', 'today']
+            h_p = df_prev.groupby('institution')['amount'].sum().reset_index()
+            h_p.columns = ['institution', 'prev']
+            h_c = h_t.merge(h_p, on='institution', how='outer').fillna(0)
+            h_c['change'] = h_c['today'] - h_c['prev']
+
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                st.markdown("📈 **增长 TOP5**")
+                growth = h_c.sort_values('change', ascending=False).head(5)
+                for _, r in growth.iterrows():
+                    st.success(f"**{r['institution'][:12]:<12}** ¥{r['today']:,.0f}（+¥{r['change']:,.0f}）")
+            with col_g2:
+                st.markdown("📉 **下降 TOP5**")
+                decline = h_c.sort_values('change', ascending=True).head(5)
+                for _, r in decline.iterrows():
+                    st.error(f"**{r['institution'][:12]:<12}** ¥{r['today']:,.0f}（-¥{abs(r['change']):,.0f}）")
+
+        # ===== 业绩类目 =====
+        st.markdown("---")
+        st.markdown("📂 **业绩类目分析**")
+
+        cat_stats = df_charge[df_charge['ye_wu_lei_mu'].notna()].groupby('ye_wu_lei_mu').agg(
+            flow=('amount', 'sum'), orders=('amount', 'count')
+        ).sort_values('flow', ascending=False)
+
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.markdown("💰 **类目流水占比**")
+            fig3 = px.pie(cat_stats.reset_index(), values='flow', names='ye_wu_lei_mu',
+                         hole=0.4, height=350)
+            fig3.update_layout(template='plotly_white', margin=dict(l=0,r=0,t=10,b=10))
+            fig3.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig3, use_container_width=True)
+        with col_c2:
+            st.markdown("📋 **类目明细**")
+            for cat, row in cat_stats.iterrows():
+                pct = row['flow'] / cat_stats['flow'].sum() * 100
+                bar = "█" * int(pct / 2)
+                st.markdown(f"**{cat}**<br><small>¥{row['flow']:,.0f}（{pct:.1f}%）{int(row['orders']):,}单</small><br>{bar}", unsafe_allow_html=True)
+
+        # ===== 省份分析 =====
+        st.markdown("---")
+        st.markdown("🌍 **省份分析**")
+
+        prov_stats = df_charge[df_charge['province'].notna()].groupby('province').agg(
+            flow=('amount', 'sum'), orders=('amount', 'count')
+        ).sort_values('flow', ascending=False)
+
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            st.markdown("💰 **省份 TOP10**")
+            p10 = prov_stats.head(10).reset_index()
+            fig4 = px.bar(p10, x='flow', y='province', orientation='h',
+                         color='flow', color_continuous_scale='Greens', height=350)
+            fig4.update_layout(template='plotly_white', showlegend=False,
+                              xaxis_tickformat=',.0f', margin=dict(l=120,r=20,t=10,b=40))
+            st.plotly_chart(fig4, use_container_width=True)
+        with col_p2:
+            st.markdown("📦 **省份订单 TOP10**")
+            p10o = prov_stats.sort_values('orders', ascending=False).head(10).reset_index()
+            fig5 = px.bar(p10o, x='orders', y='province', orientation='h',
+                         color='orders', color_continuous_scale='YlOrRd', height=350)
+            fig5.update_layout(template='plotly_white', showlegend=False,
+                              xaxis_tickformat=',', margin=dict(l=120,r=20,t=10,b=40))
+            st.plotly_chart(fig5, use_container_width=True)
+
+        # ===== 退款监控 =====
+        st.markdown("---")
+        st.markdown("⚠️ **退款监控**")
+
+        refund_today = df_refund[df_refund['date'] == latest_date]
+        refund_flow = abs(refund_today['amount'].sum())
+        refund_count = len(refund_today)
+        refund_rate = refund_count / (today_orders + refund_count) * 100 if (today_orders + refund_count) > 0 else 0
+
+        col_r1, col_r2, col_r3 = st.columns(3)
+        with col_r1:
+            st.metric("💸 退款金额", f"¥{refund_flow:,.0f} 元")
+        with col_r2:
+            st.metric("📦 退款订单", f"{refund_count} 单")
+        with col_r3:
+            st.metric("📊 退款率", f"{refund_rate:.1f}%")
+
+        if refund_count > 0:
+            st.markdown("🏥 **退款 TOP 医院**")
+            rh = refund_today.groupby('institution').agg(
+                count=('amount', 'count'), flow=('amount', 'sum')
+            ).sort_values('count', ascending=False).head(10).reset_index()
+            for _, r in rh.iterrows():
+                st.warning(f"**{r['institution'][:20]}** {int(r['count'])}单 ¥{abs(r['flow']):,.0f}")
+
+            st.markdown("📂 **退款 TOP 类目**")
+            rc = refund_today[refund_today['ye_wu_lei_mu'].notna()].groupby('ye_wu_lei_mu').size().sort_values(ascending=False).head(5)
+            for cat, cnt in rc.items():
+                st.warning(f"{cat}：{int(cnt)}单")
+        else:
+            st.success("✅ 今日无退款")
+
+        conn_r.close()
+
+    except Exception as e:
+        st.error(f"❌ 运营快报加载失败：{e}")
+
+# ========== 底部信息 ==========
 # ========== 底部信息 ==========
 st.divider()
 col_info1, col_info2, col_info3 = st.columns(3)

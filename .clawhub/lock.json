@@ -28,6 +28,14 @@
     "skill-finder-cn": {
       "version": "1.0.0",
       "installedAt": 1773717195308
+    },
+    "rupert-data-analysis": {
+      "version": "1.0.0",
+      "installedAt": 1775098466847
+    },
+    "data-analysis": {
+      "version": "1.0.2",
+      "installedAt": 1775098466925
     }
   }
 }

@@ -1,0 +1,59 @@
+# 数据库
+*.db
+*.sqlite
+*.sqlite3
+
+# Excel 数据文件（不上传）
+*.xlsx
+*.xls
+*.csv
+
+# 临时文件
+~$*
+*.tmp
+*.log
+
+# 图片
+*.png
+*.jpg
+*.jpeg
+
+# HTML 导出
+*.html
+
+# 内存文件
+memory/*.md
+memory/*.json
+
+# 技能和配置
+skills/
+data-import-agent/
+templates/
+logs_backup_*/
+*.pyc
+__pycache__/
+
+# Streamlit
+.streamlit/
+
+# 其他
+cron_import_reminder.json
+pending_import_info.json
+smb_config.txt
+test-run.sh
+dbbrowser.AppImage
+fix_*.py
+query_*.py
+read_xlsx.py
+rebuild_summary.py
+sqlite_viewer.py
+web_sqlite_viewer.py
+update_duizhang_*.py
+hospital_chart_*.html
+hospital_trend_charts.*
+huhuan_chart*.png
+business_chart.png
+7*医院*.png
+*医院*.png
+*对比*.png
+*趋势*.png

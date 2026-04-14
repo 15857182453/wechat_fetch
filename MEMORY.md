@@ -1,7 +1,7 @@
 # 🧠 长期记忆
 
 **创建日期**: 2026-04-08  
-**最后更新**: 2026-04-12
+**最后更新**: 2026-04-14
 
 ---
 
@@ -36,6 +36,8 @@
 8. ❌ SQLite 查询用独立 conn/cursor，不要用已关闭的连接
 9. ❌ pd.to_datetime() 后才能用 .dt accessor
 10. ⚠️ 汇总表 Excel 列映射可能变化，导入前需验证列结构
+11. ❌ 订单数统计必须过滤退款，加 `pay_status='收费'` 条件
+12. ❌ 月环比计算排除未来/空数据，`WHERE date < date('now') AND daily_total_flow > 0`
 
 ### Dashboard 版本
 - **活跃**: `dashboard_v4.py`
@@ -48,17 +50,15 @@
 ### 医院数据 Dashboard（v4）
 - **文件**: `/home/openclaw/.openclaw/workspace/dashboard_v4.py`
 - **访问**: http://localhost:8501
-- **10 个标签页**:
+- **8 个标签页**:
   1. 📊 总览 — KPI + 医院详情
   2. 📈 趋势 — 近 7 天订单/金额
   3. ⚠️ 异常监控 — 4 种算法
   4. 🏆 排行 — Top 10 + 近 7 天
   5. 🗺️ 区域分布 — 省份地图
-  6. 📉 月环比 — 动态计算
-  7. 👥 患者地域分布 — 饼图 TOP10
-  8. 💊 药品 TOP10 — 销量/金额双轴
-  9. 🕐 就诊时段热力图 — 24h 分布
-  10. 🌸 季节性药品分析 — 月度对比
+  6. 📉 月环比 — 动态计算（排除空数据）
+  7. 👤 患者地域分布 — 饼图 TOP10
+  8. 💊 便捷配药 — 8 张机构趋势图（4 常规 + 4 新增）
 
 ### 数据源
 - **汇总表** `新流水2026.xlsx`（28列）：权威数据源
@@ -76,8 +76,8 @@
 4. 单位统一为元
 
 ### 月环比计算逻辑
-- **动态计算到最新数据日期**（如最新数据 4/6，则对比 3/1-6 和 2025-12/1-6）
-- 上月同期 = 上月 1日 到 最新数据日期
+- 排除未来/空数据：`WHERE date < date('now') AND daily_total_flow > 0`
+- 锁定到昨天，对比上月同期
 
 ### 异常检测算法（4 种）
 1. **Z-Score**: |Z| > 2.0（排除今日计算均值）
@@ -92,14 +92,30 @@
 ### 数据库
 - **路径**: `/home/openclaw/.openclaw/workspace/business_flow.db`
 - **主要表**:
-  - `duizhang_summary_2026` — 每日汇总（万元）
+  - `duizhang_summary_2026` — 每日汇总（万元），最新 4/16
   - `duizhang_summary_2025` — 2025 全年（365 条）
-  - `daily_flow_2026_apr` — 4 月明细（~31,000+ 条，元）
-  - `ningxia_orders_2026_apr` — 宁夏订单明细
+  - `daily_flow_2026_apr` — 4 月明细（44,556 条，元）
+  - `daily_flow_2026_mar` — 3 月明细（186,939 条）
+  - `daily_flow_2026_jan_feb` — 1-2 月明细（42,885 条）
+  - `ningxia_orders_2026_apr` — 宁夏订单（20,670 条）
 
-### 🏥 4 家便捷配药医院
-- 齐鲁德医、齐鲁第二医院、安徽省立医院、青岛中心
-- 数据来自 `daily_flow_2026_jan_feb` + `daily_flow_2026_mar` + `daily_flow_2026_apr` UNION ALL
+### 💊 便捷配药机构（8 家）
+- **常规 4 家**: 浙江省中医院（湖滨院区）、杭州师范大学附属医院、青岛中心医院、宁夏医科大学总医院
+- **新增 4 家**: 齐鲁德医、齐鲁第二医院、安徽省立医院、青岛中心
+- **样式**: 蓝色标题条 + HTML 转置透视表 + 近 15 天折线图
+- **汇总卡片**: 2026 年累计数据（订单总数/总流水）
+- **订单过滤**: 必须加 `pay_status='收费'` 排除退款
+
+### 自动化导出
+- **脚本**: `auto_export_ngari_win.py`（Windows 本地运行）
+- **依赖**: Playwright + Chromium
+- **首次**: 手动登录完成验证，保存 Cookie
+- **之后**: 自动登录，只需选择日期、点击导出
+
+### 数据维度（约 100+ 个字段）
+- **明细表**: institution, province, pay_status, ye_wu_lei_mu, yewu_leixing, oper_person, pay_method
+- **汇总表**: 11 个业务类型流水 + 日总流水 + 环比
+- **宁夏订单**: 57 个字段（患者、处方、物流完整信息）
 
 ---
 
@@ -125,10 +141,18 @@
 ---
 
 ## 🔧 模型配置
-- **当前模型**: qwen/qwen3.5-plus（默认）
-- **可用 provider**: modelstudio/qwen（有 API key）
-- ⚠️ qwen3.6-plus 在 bailian provider 无 API key，不可用
+- **当前模型**: qwen/qwen3.6-plus（默认）
+- **Provider**: qwen:default（有 API key）
 - 配置文件: `~/.openclaw/agents/main/agent/models.json`
+
+### 🔐 纳里健康 API
+- **网站**: https://yypt.ngarihealth.com
+- **账号**: zly_yyzx
+- **AES 密钥**: ms4gxansxo459uom（ECB 模式）
+- **API**: `/ehealth-opbase/openapi/gateway`
+- **导出方法**: `exportFinanceBillOrderExcel`
+- **自动化脚本**: `auto_export_ngari_win.py`（Windows 本地运行）
+- **Cookie 文件**: `cookies.json`（保存登录状态）
 
 ---
 
