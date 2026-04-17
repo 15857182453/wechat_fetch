@@ -1241,7 +1241,7 @@ with tab7:
         HOSPITALS = [
             {'title': '浙江省中医院便捷配药订单统计', 'name': '浙江省中医院（湖滨院区）', 'type': 'single'},
             {'title': '杭州师范大学附属医院便捷配药统计', 'name': '杭州师范大学附属医院', 'type': 'dual'},
-            {'title': '青岛市中医院便捷配药统计', 'name': '青岛中心医院', 'type': 'dual'},
+            {'title': '青岛市中医院便捷配药统计', 'name': '青岛市中医医院（市海慈医院）', 'type': 'dual'},
             {'title': '宁夏医科大学总医院便捷配药订单统计', 'name': '宁夏医科大学总医院', 'type': 'single'}
         ]
         
@@ -1279,6 +1279,33 @@ with tab7:
             
             for idx, config in enumerate(data_list):
                 df = config['data']
+                
+                # === 数据清洗：去重、聚合、补全日期 ===
+                if not df.empty:
+                    df['date'] = pd.to_datetime(df['date'])
+                    
+                    # 1. 聚合：按日期汇总（防止 UNION ALL 产生重复行）
+                    agg_dict = {'orders': 'sum'}
+                    if 'flow' in df.columns:
+                        agg_dict['flow'] = 'sum'
+                    df = df.groupby('date').agg(agg_dict).reset_index()
+
+                    # 2. 补全日期：确保每一天都有数据，缺失的填 0
+                    df = df.set_index('date')
+                    max_date = df.index.max()
+                    target_end = max(max_date, pd.Timestamp.now() - pd.Timedelta(days=1)).normalize()
+                    
+                    # 仅对近 30 天的数据补全（太久远的数据不需要补全到今天）
+                    if max_date >= pd.Timestamp.now() - pd.Timedelta(days=30):
+                         full_range = pd.date_range(start=df.index.min(), end=target_end)
+                         df = df.reindex(full_range, fill_value=0)
+                    
+                    # 重置索引恢复为普通列
+                    df = df.reset_index()
+                    df.columns = ['date'] + list(agg_dict.keys())
+                    config['data'] = df
+                    df = config['data']
+                
                 title = config['title']
                 
                 # 汇总卡片用累计数据（2026 年至今）
@@ -1413,6 +1440,33 @@ with tab7:
             
             for idx, config in enumerate(data_list):
                 df = config['data']
+                
+                # === 数据清洗：去重、聚合、补全日期 ===
+                if not df.empty:
+                    df['date'] = pd.to_datetime(df['date'])
+                    
+                    # 1. 聚合：按日期汇总（防止 UNION ALL 产生重复行）
+                    agg_dict = {'orders': 'sum'}
+                    if 'flow' in df.columns:
+                        agg_dict['flow'] = 'sum'
+                    df = df.groupby('date').agg(agg_dict).reset_index()
+
+                    # 2. 补全日期：确保每一天都有数据，缺失的填 0
+                    df = df.set_index('date')
+                    max_date = df.index.max()
+                    target_end = max(max_date, pd.Timestamp.now() - pd.Timedelta(days=1)).normalize()
+                    
+                    # 仅对近 30 天的数据补全（太久远的数据不需要补全到今天）
+                    if max_date >= pd.Timestamp.now() - pd.Timedelta(days=30):
+                         full_range = pd.date_range(start=df.index.min(), end=target_end)
+                         df = df.reindex(full_range, fill_value=0)
+                    
+                    # 重置索引恢复为普通列
+                    df = df.reset_index()
+                    df.columns = ['date'] + list(agg_dict.keys())
+                    config['data'] = df
+                    df = config['data']
+                
                 title = config['title']
                 
                 # 汇总数据（2026年累计）
