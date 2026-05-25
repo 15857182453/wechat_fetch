@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Data / SQLite
+data/
+*.db
+
+# Output
+output/
+
+# Debug / experimental files
+debug_kdocs*.py
+kdocs_*.py
+kdocs_*.png
+kdocs_*.json
+kdocs_*.pdf
+kdocs_*.xlsx
+kdocs_*.bin
+sheet_*.png
+*.png
+
+# Config with secrets
+config.py
+
+# Excel source files
+*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
