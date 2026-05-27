@@ -2800,6 +2800,9 @@ with tab11:
         else:
             d4 = fx_data['monthly_4']
             d5 = fx_data['monthly_5']
+            # 从 API 数据中获取 5 月实际结束日期
+            ai5 = d5.get('analysisInfo', {})
+            ai5_end = str(ai5.get('endTime', '27'))[8:10].lstrip('0')  # 提取天数
 
             # 构建医院列表
             hospitals_4 = {r[1]: r for r in d4['resultRows']}
@@ -2864,7 +2867,7 @@ with tab11:
                     return f"{(curr - prev) / prev * 100:+.1f}%"
 
                 # ── 核心指标 ──
-                st.subheader("📈 4月 vs 5月(1-14日) 核心指标对比")
+                st.subheader(f"📈 4月 vs 5月(1-{ai5_end}) 核心指标对比")
                 c1, c2, c3, c4, c5, c6 = st.columns(6)
                 c1.metric("💰 GMV", f"¥{g5:,.0f}", fmt_chg(g5, g4) if r4 else None)
                 c2.metric("👥 访问人数", f"{v5:,}", fmt_chg(v5, v4) if r4 else None)
@@ -2873,7 +2876,7 @@ with tab11:
                 c5.metric("🔄 转化率", f"{conv5*100:.1f}%", fmt_chg(conv5*100, conv4*100) if r4 else None)
                 c6.metric("🔁 60天复购", f"{r60_5*100:.1f}%", fmt_chg(r60_5*100, r60_4*100) if r4 else None)
 
-                st.info("📅 数据周期：4月(4/1~5/1) vs 5月(5/1~5/14)")
+                st.info(f"📅 数据周期：4月(4/1~5/1) vs 5月(5/1~5/{ai5_end})")
                 st.divider()
 
                 # ── 转化漏斗 ──
@@ -2977,23 +2980,38 @@ with tab11:
                 # ── 药方维度数据（仅该院）──
                 st.subheader("💊 药方维度数据 (5月)")
                 rx5 = fx_data['rx_5']
-                rx5_rows = [{
-                    '药方名称': r[1],
-                    '是否需问卷': r[5],
-                    '详情页浏览': int(r[6]) if r[6] else 0,
-                    '加购人数': int(r[7]) if r[7] else 0,
-                    '订单提交': int(r[8]) if r[8] else 0,
-                    '支付成功': int(r[9]) if r[9] else 0,
-                    '转化率': round(float(r[10]), 1) if r[10] else 0,
-                    '支付金额': round(float(r[11]), 2) if r[11] else 0,
-                } for r in rx5['resultRows'] if r[3] == selected_hospital]
+                # 用 resultHeader 动态匹配列索引（rx_4 和 rx_5 列结构不同！）
+                def rx_row(r, rx_data):
+                    h = rx_data['resultHeader']
+                    def idx(name):
+                        for j, hname in enumerate(h):
+                            if name in hname:
+                                return j
+                        return -1
+                    return {
+                        '药方名称': r[1],
+                        '是否需问卷': r[5] if idx('购买是否需要问卷') == 5 else '',
+                        '详情页浏览': int(float(r[idx('详情页浏览')])) if idx('详情页浏览') >= 0 and r[idx('详情页浏览')] else 0,
+                        '加购人数': int(float(r[idx('加购')])) if idx('加购') >= 0 and r[idx('加购')] else 0,
+                        '订单提交': int(float(r[idx('提交')])) if idx('提交') >= 0 and r[idx('提交')] else 0,
+                        '支付成功': int(float(r[idx('支付成功')])) if idx('支付成功') >= 0 and r[idx('支付成功')] else 0,
+                        '转化率': round(float(r[idx('转化率')]), 2) if idx('转化率') >= 0 and r[idx('转化率')] else 0,
+                        '支付金额': round(float(r[idx('金额')]), 2) if idx('金额') >= 0 and r[idx('金额')] else 0,
+                    }
+                
+                rx5_rows = [rx_row(r, rx5) for r in rx5['resultRows'] if r[3] == selected_hospital]
+                
+                # 同时获取 4月药方数据
+                rx4 = fx_data['rx_4']
+                rx4_rows = [rx_row(r, rx4) for r in rx4['resultRows'] if r[3] == selected_hospital]
 
                 if rx5_rows:
                     df_rx5 = pd.DataFrame(rx5_rows).sort_values('支付金额', ascending=False)
+                    st.markdown("**5月药方数据**")
                     st.dataframe(df_rx5, use_container_width=True, hide_index=True,
                                 column_config={
                                     '支付金额': st.column_config.NumberColumn("支付金额", format="¥%.2f"),
-                                    '转化率': st.column_config.NumberColumn("转化率", format="%.1f%%"),
+                                    '转化率': st.column_config.NumberColumn("转化率", format="%.2f%%"),
                                 })
                     rx_top = df_rx5.head(10)
                     fig_rx = px.bar(
@@ -3003,6 +3021,16 @@ with tab11:
                     )
                     fig_rx.update_layout(height=400, template='plotly_white')
                     st.plotly_chart(fig_rx, use_container_width=True)
+                    
+                    # 4月药方对比
+                    if rx4_rows:
+                        st.markdown("**4月药方数据（对比）**")
+                        df_rx4 = pd.DataFrame(rx4_rows).sort_values('支付金额', ascending=False)
+                        st.dataframe(df_rx4, use_container_width=True, hide_index=True,
+                                    column_config={
+                                        '支付金额': st.column_config.NumberColumn("支付金额", format="¥%.2f"),
+                                        '转化率': st.column_config.NumberColumn("转化率", format="%.2f%%"),
+                                    })
                 else:
                     st.info("💊 暂无该院的药方数据")
 
