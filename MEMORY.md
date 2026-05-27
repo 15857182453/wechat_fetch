@@ -196,7 +196,13 @@
 
 ### 第三方 API
 - **fenxiti.com（分析体）**: Token=`fvoaF0c7BPS5va8Ijxd9T_jsiZU`, spaceId=`aYMlRm4x`
-- Dashboard Tab 10 使用其 API 做用户行为分析（医院专属月报模式）
+- Dashboard Tab 11 使用其 API 做用户行为分析（医院专属月报模式）
+- **数据刷新**: `fetch_fenxiti_data.py` 拉取 4 个事件分析图表 → 4 个 JSON 文件
+  - 4月核心: `GMJJWkMP` → `data_fenxiti_monthly_4.json` (66行)
+  - 5月核心: `Dp2jw0pJ` → `data_fenxiti_monthly_5.json` (65行)
+  - 4月药方: `DpBqejMk` → `data_fenxiti_rx_4.json` (1204行, 15列含最小起定量)
+  - 5月药方: `Y4YEJj4m` → `data_fenxiti_rx_5.json` (1195行, 13列无最小起定量)
+  - ⚠️ rx_4 和 rx_5 列结构不同，Tab 11 用 resultHeader 动态匹配列名
 
 ## 🔧 模型配置
 - **默认模型**: bailian/qwen3.6-plus（已删除 deepseek provider）
