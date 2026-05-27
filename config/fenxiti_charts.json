@@ -1,0 +1,26 @@
+{
+  "spaceId": "aYMlRm4x",
+  "token": "fvoaF0c7BPS5va8Ijxd9T_jsiZU",
+  "charts": {
+    "monthly_5": {
+      "id": "Dp2jw0pJ",
+      "name": "医院运营月度核心数据",
+      "period": "5/1-5/14"
+    },
+    "rx_5": {
+      "id": "Y4YEJj4m",
+      "name": "药方维度数据",
+      "period": "5/1-5/14"
+    },
+    "monthly_4": {
+      "id": "GMJJWkMP",
+      "name": "医院运营上月核心数据",
+      "period": "4/1-5/1"
+    },
+    "rx_4": {
+      "id": "DpBqejMk",
+      "name": "药方维度上月数据",
+      "period": "4/1-5/1"
+    }
+  }
+}

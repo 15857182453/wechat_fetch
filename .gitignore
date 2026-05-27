@@ -57,3 +57,48 @@ business_chart.png
 *医院*.png
 *对比*.png
 *趋势*.png
+
+# === 整理新增 ===
+# 备份/废弃文件
+*.bak*
+*.rej
+*_backup*
+*_fixed*
+*_redesign*
+*_v2.py
+*_v3.py
+*_v4.py
+*_v5.py
+*_v6.py
+*_final_correct*
+_import*
+import_*_batch.py
+import_may_detail.py
+import_summary_*.py
+import_third_party.py
+
+# 同步/子项目目录
+_memory_sync/
+openclaw-memory/
+codex/
+
+# 数据文件
+data_fenxiti_*.json
+
+# 生成报告
+gen_report*.py
+generate_*.py
+shaoyifu_*.png
+stock_post_*.md
+trading_strategy.md
+portfolio.md
+auto_audit_log.txt
+
+# Python
+.python-version
+
+# 嵌套 git 仓库（不纳入）
+MediaCrawler/.git/
+codex/.git/
+main/.git/
+openclaw-memory/.git/
