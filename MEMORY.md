@@ -46,6 +46,7 @@
 18. ⚠️ 汇总表列索引澄清（skiprows=4 后）：c23(列索引23)=日总流水(元)、c24(列索引24)=日总流水(万元)。业务流水列(c1-c22)单位是元需÷10000。c24已经是万元不要÷10000。
 19. ❌ Claude 可能误删数据库/改代码，导入前务必确认数据状态！5/21 因此丢了 3.6 万条明细
 20. ❌ `trans_no`（交易流水号）是大整数，SQLite INTEGER 会溢出，必须用 TEXT 存储（5/11 踩坑）
+21. ❌ fenxiti 药方数据的 rx_4(15列含最小起定量) 和 rx_5(13列) 列结构不同，硬编码索引会导致数据错位，必须用 resultHeader 动态匹配列名（5/27 踩坑）
 
 ### Dashboard 版本
 - **活跃**: `dashboard_v4.py`（3021 行，11 个 tab，已加登录守卫 auth_guard.py）
@@ -123,15 +124,15 @@
 ### 数据库
 - **路径**: `/home/openclaw/.openclaw/workspace/business_flow.db`
 - **主要表**:
-  - `duizhang_summary_2026` — 每日汇总（万元），152 条，最新有数据 5/25（31.52万），5/26-6/1 为 0 占位
+  - `duizhang_summary_2026` — 每日汇总（万元），152 条，最新有数据 5/26（30.49万），5/27-6/1 为 0 占位
   - `duizhang_summary_2025` — 2025 全年（365 条）
-  - `daily_flow_2026_may` — 5 月明细（99,261 条，¥448.41万，含第三方分账）
+  - `daily_flow_2026_may` — 5 月明细（106,037 条，¥478.14万，含第三方分账）
   - `daily_flow_2026_apr` — 4 月明细（91,549 条，¥500.48万）
   - `daily_flow_2026_mar` — 3 月明细（235,843 条，¥780.63万）
   - `daily_flow_2026_jan` — 1 月明细（69,634 条，¥492.38万）
   - `daily_flow_2026_feb` — 2 月明细（54,177 条，¥344.47万）
   - ⚠️ `daily_flow_2026_jan_feb` / `jan_feb_old` / `jan_old` / `feb_old` / `mar_old` 为旧版备份表，查询时排除
-  - `prescription_summary` — 预聚合表（11,814 行）
+  - `prescription_summary` — 预聚合表（11,847 行）
   - `ningxia_orders_2026_apr` — 宁夏订单
   - `community_orders` — 社群订单（216,339 条，57 字段）
   - **注意**: 汇总表 5/21 日总流水 44.91 万 > 明细表同日 ~34 万（差额 ~10.8 万），因汇总表是纳里系统全量统计，可能包含明细未覆盖的记录
@@ -175,6 +176,7 @@
 - **仓库**: https://github.com/15857182453/wechat_fetch
 - **Dashboard**: `/hospital-dashboard/` 独立文件夹
 - **代码**: Dashboard + 导入脚本 + 分析工具 + 文档
+- **规范**: `GIT_WORKFLOW.md` — commit 格式、目录结构、不复制文件留版本
 
 ---
 
@@ -203,6 +205,9 @@
   - 4月药方: `DpBqejMk` → `data_fenxiti_rx_4.json` (1204行, 15列含最小起定量)
   - 5月药方: `Y4YEJj4m` → `data_fenxiti_rx_5.json` (1195行, 13列无最小起定量)
   - ⚠️ rx_4 和 rx_5 列结构不同，Tab 11 用 resultHeader 动态匹配列名
+  - ⚠️ 日期标签从 analysisInfo.endTime 动态读取，不要硬编码"1-14日"
+  - **配置文件**: `config/fenxiti_charts.json`（chart IDs + periods）
+  - **历史脚本**: `fenxiti-api/fenxiti-query.js`（Node 版，备选）
 
 ## 🔧 模型配置
 - **默认模型**: bailian/qwen3.6-plus（已删除 deepseek provider）
