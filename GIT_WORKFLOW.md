@@ -87,6 +87,15 @@ workspace/
 
 ---
 
+## 自动备份（安全网）
+
+**每小时自动 commit** 未提交的变更：`scripts/git-auto-backup.sh`
+
+- 只 commit，**不 push**
+- commit message: `auto-backup: YYYY-MM-DD HH:MM 未提交变更自动备份`
+- 日志: `logs/git-auto-backup.log`
+- 如果你忘记提交，最多丢一小时的改动（实际上不会丢，会自动备份）
+
 ## 自动同步
 
 - **sync.sh**: 每小时同步 memory 到 `openclaw-memory` 仓库
