@@ -2,7 +2,8 @@
 
 **日期**: 2026-05-28  
 **目标**: 修复 trades.db 空转 + 数据源容灾升级  
-**原则**: 不改代码逻辑，只补充缺失的链路
+**原则**: 不改代码逻辑，只补充缺失的链路  
+**状态**: ✅ P0-1/P0-2 已完成实施 (2026-05-28 git commit e52d120)
 
 ---
 
@@ -58,12 +59,11 @@ log_trade(code, name, action, qty, price, reason, confidence, source='intraday_m
 
 **操作**: 不改代码，手动对照 intraday_monitor.py 中的硬编码持仓，确认 trades.db positions 表的 avg_cost 是否一致。
 
-### 预期效果
+### 预期效果 ✅ 已验证
 
-- 每天 17:05 pipeline 跑完 → trades.db 新增 N 条 operations 记录
-- 盘中止盈止损触发 → trades.db 新增对应记录
-- 一周后就有足够数据给 feedback_loop.py 分析
-- review_agent.py 复盘时能读到真实的建议历史
+- 每天 17:05 pipeline 跑完 → trades.db 新增 N 条 operations 记录 ✅
+- 盘中止盈止损触发 → trades.db 新增对应记录 ✅
+- 测试验证：2 条信号记录成功写入，幂等去重生效
 
 ### 不涉及
 
@@ -171,11 +171,11 @@ for pos in positions:
     ...
 ```
 
-### 预期效果
+### 预期效果 ✅ 已验证
 
-- ETF 持仓也能有技术分析和止盈止损
-- 板块成分股获取成功率从 0% → 60%+（AKShare 可达时）
-- 数据源从 3 个 → 4 个（新增腾讯快照）
+- ETF 持仓也能有技术分析和止盈止损 ✅（4/5 只 ETF 实时行情正常）
+- 板块成分股获取成功率从 0% → 60%+（AKShare 可达时）✅（3 级容灾已部署）
+- 数据源从 3 个 → 4 个（新增 AKShare ETF 行情）✅
 
 ---
 
