@@ -22,5 +22,5 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'output')
 TEMPLATE_MATRIX_PATH = r"E:\禅道自动化数据项目\1 研发中心质控部基础数据\需求表\2026-1-V1 版本-01-需求跟踪矩阵.xlsx"
 
 # === 业务配置 ===
-TARGET_PROJECT_IDS = [1970, 1977, 1984, 1990, 1996, 2002, 2007]
+TARGET_PROJECT_IDS = [1970, 1977, 1984, 1990, 1996, 2002, 2007, 2012, 2019, 2025]
 TARGET_PRODUCT_ID = 32
