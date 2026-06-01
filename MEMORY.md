@@ -1,7 +1,7 @@
 # 🧠 长期记忆
 
 **创建日期**: 2026-04-08  
-**最后更新**: 2026-05-27
+**最后更新**: 2026-05-30
 
 ---
 
@@ -50,6 +50,7 @@
 
 ### Dashboard 版本
 - **活跃**: `dashboard_v4.py`（3021 行，11 个 tab，已加登录守卫 auth_guard.py）
+- ⚠️ Windows 锁定 Excel 汇总表时，daily_workflow 生成 `_已填充.xlsx` 副本，需手动同步到 DB 汇总表
 - **禅道看板**: `app_v2.py`（端口 8503）
 - **重启**: `tmux kill-session -t dashboard` → `streamlit run dashboard_v4.py --server.port 8501 --server.headless true`
 - **内网穿透**: ngrok 可用（`ngrok http 8501`）；cpolar 曾有配置文件但二进制未安装
@@ -60,7 +61,7 @@
 ### 预聚合表
 - **表名**: `prescription_summary`（yr, institution, cnt, amt, avg_amt, dt）
 - **用途**: 70x 查询加速（0.85s → 0.012s），替代 Dashboard 每次启动的全表扫描
-- **刷新脚本**: `refresh_prescription_summary.py`（全量 ~1s / 增量 ~0.05s）
+- **刷新脚本**: `refresh_prescription_summary.py`（全量 ~9s / 增量 ~0.05s）
 - **每次导入明细数据后必须刷新**
 - ⚠️ 异常 dt='业务完成时间' 曾混入 23 行，根因已在 `refresh_prescription_summary.py` 修复（移除中文列名引用 + 格式校验），Dashboard 保留正则防御性过滤
 
@@ -71,17 +72,18 @@
 ### 医院数据 Dashboard（v4）
 - **文件**: `/home/openclaw/.openclaw/workspace/dashboard_v4.py`
 - **访问**: http://localhost:8501
-- **10 个标签页**:
+- **11 个标签页**:
   1. 📊 总览分析 — KPI + 医院详情
   2. 📈 趋势洞察 — 近 7 天订单/金额
   3. ⚠️ 异常监控 — 4 种算法
   4. 🏆 医院排行 — Top 10 + 近 7 天
   5. 📉 月度环比 — 动态计算（排除空数据）
-  6. 💊 便捷配药 — 8 张机构趋势图
+  6. 💊 便捷配药数据统计 — 8 张机构趋势图
   7. 📋 运营快报 — 每日运营概览
   8. 📊 本周总结
   9. 🔗 第三方服务分析
   10. 📊 用户行为分析 — fenxiti.com API
+  11. 🔗 (Tab 10/11 序号可能因版本而异，以实际为准)
 
 ### 数据源
 - **汇总表** `新流水2026.xlsx`（28列）：权威数据源
@@ -118,21 +120,22 @@
 ### 数据导入
 - **健壮版脚本**: `import_duizhang_robust.py` — 自动检测单位、数据验证、去重
 - **明细导入**: `import_detail_*.py`
-- **汇总导入流程**: 读 Excel → c24 已经是万元（直接读，不要 ÷10000）→ UPSERT → 清理异常 → 验证
+- **汇总导入流程**: 读 Excel（skiprows=4）→ 业务流水列(c1-c22)÷10000，c24(日总流水万)直接读，c25(日流水增量万)直接读，c26(日流水环比倍)直接读 → UPSERT → 验证
+  - ⚠️ 列映射: c24=日总流水(万元)、c25=日流水增量(万元)、c26=日流水环比(倍数)，不要搞反！
 - **文件路径**: E 盘路径 `/mnt/e/办公资料/业务对账数据/` 也可用，不要只认 C 盘
 
 ### 数据库
 - **路径**: `/home/openclaw/.openclaw/workspace/business_flow.db`
 - **主要表**:
-  - `duizhang_summary_2026` — 每日汇总（万元），152 条，最新有数据 5/26（30.49万），5/27-6/1 为 0 占位
+  - `duizhang_summary_2026` — 每日汇总（万元），152 条，最新有数据 5/28（28.52万）
   - `duizhang_summary_2025` — 2025 全年（365 条）
-  - `daily_flow_2026_may` — 5 月明细（106,037 条，¥478.14万，含第三方分账）
+  - `daily_flow_2026_may` — 5 月明细（114,846 条，¥527.46万，含第三方分账）
   - `daily_flow_2026_apr` — 4 月明细（91,549 条，¥500.48万）
   - `daily_flow_2026_mar` — 3 月明细（235,843 条，¥780.63万）
   - `daily_flow_2026_jan` — 1 月明细（69,634 条，¥492.38万）
   - `daily_flow_2026_feb` — 2 月明细（54,177 条，¥344.47万）
   - ⚠️ `daily_flow_2026_jan_feb` / `jan_feb_old` / `jan_old` / `feb_old` / `mar_old` 为旧版备份表，查询时排除
-  - `prescription_summary` — 预聚合表（11,847 行）
+  - `prescription_summary` — 预聚合表（11,916 行）
   - `ningxia_orders_2026_apr` — 宁夏订单
   - `community_orders` — 社群订单（216,339 条，57 字段）
   - **注意**: 汇总表 5/21 日总流水 44.91 万 > 明细表同日 ~34 万（差额 ~10.8 万），因汇总表是纳里系统全量统计，可能包含明细未覆盖的记录
@@ -180,9 +183,14 @@
 
 ---
 
-## 🔧 技能
+##  技能
 1. self-improving-agent-cn — 自我改进
 2. data-analysis — 数据分析
+3. ui-ux-pro-max — UI/UX 设计（每次会话自动加载）
+4. using-superpowers — 纪律约束（每次会话自动加载）
+
+### 自动加载 Skill
+- 参见 [user_auto_skills.md](user_auto_skills.md) — ui-ux-pro-max + using-superpowers
 
 ---
 
